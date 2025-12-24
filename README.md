@@ -22,7 +22,7 @@ The ground simulation system of the TianQin Project is designed to validate drag
 
 The controlled plant investigated in this course project is a compact three-degree-of-freedom active vibration isolation platform, as illustrated in the figure. Two inertial sensors are installed at the center of the platform to measure velocity signals in the horizontal and vertical directions, providing essential state-related information for active control. In addition, the platform is equipped with three voice coil actuators: one actuator is responsible for horizontal motion control, while the remaining two form a dual-actuator configuration for the vertical direction, enabling independent control of the vertical degree of freedom. This sensor–actuator architecture constitutes a typical multi-input multi-output (MIMO) active vibration isolation system, which provides a concrete physical basis for subsequent controller design, controllability and observability analysis, state estimation, and the development of Kalman filtering techniques.
 
-![alt text](appendix/diagram_of_the_controlled_object.jpg)
+![alt text](old-result/appendix/diagram_of_the_controlled_object.jpg)
 
 ---
 
@@ -136,17 +136,23 @@ In the data processing stage, the sampling parameters are first determined from 
 
 PSD estimation is performed using the Welch averaged periodogram method for system output signals under different control strategies. In particular, velocity outputs in the vertical and horizontal directions on both sides of the platform are processed independently. The resulting PSD curves are plotted on logarithmic axes, enabling direct comparison across multiple decades of frequency.
 
-As illustrated by the vertical rotating output example, the low-frequency range of the PSD reflects the controller’s ability to suppress ground disturbances and structural resonances, the mid-frequency range reveals the effects of control bandwidth and dynamic coupling, and the high-frequency range is dominated by sensor noise and controller roll-off characteristics. The results indicate that the MIMO LQG controller achieves superior resonance suppression and overall energy reduction, while the decoupled LQG strategy further improves performance in specific frequency bands without sacrificing multivariable coordination.
 
 ```python
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import welch
+import pandas as pd
+
+# ===============================
+# Read-data example: ADC noise
+# ===============================
+data = pd.read_csv('ns.csv')
+ns = data['ns'].values
 
 # ===============================
 # Sampling parameters
 # ===============================
-dt = t[1] - t[0]              # time step
+Ts = np.mean(np.diff(t))      # time step
 fs = 1.0 / dt                 # sampling frequency
 T = t[-1] - t[0]              # total duration
 L = len(t)
@@ -160,44 +166,40 @@ print('Welch segment length M:', M)
 print('Number of averages L/M:', L / M)
 
 # ===============================
-# PSD computation
+# ASD computation
 # ===============================
-f, P_VL_c1 = welch(y_VL_c1, fs=fs, nperseg=M)
-_, P_HL_c1 = welch(y_HL_c1, fs=fs, nperseg=M)
 
-_, P_VL_c2 = welch(y_VL_c2, fs=fs, nperseg=M)
-_, P_HL_c2 = welch(y_HL_c2, fs=fs, nperseg=M)
+def fast_d_asd(data: ndarray, fs: float=fs, M: int=M, Delta_f: float=Delta_f, f_max: float=1000.0) -> tuple(ndarray, ndarray):
+    '''
+    fastly compute the displacement asd with welch method.
+    '''
+    f, pxx = welch(data, fs=fs, nperseg=M)
+    mask = (f > Delta_f) & (f < f_max) 
+    # mask = (f > Delta_f)
+    d_asd = np.sqrt(pxx[mask]) / (2 * np.pi * f[mask])
+    return f[mask], d_asd
 
-_, P_VL_o  = welch(y_VL_o,  fs=fs, nperseg=M)
-_, P_HL_o  = welch(y_HL_o,  fs=fs, nperseg=M)
-
-_, P_VR_c1 = welch(y_VR_c1, fs=fs, nperseg=M)
-_, P_VR_c2 = welch(y_VR_c2, fs=fs, nperseg=M)
-_, P_VR_o  = welch(y_VR_o,  fs=fs, nperseg=M)
-
-# Sensor noise PSD (optional)
-_, P_ns = welch(ns, fs=fs, nperseg=M)
+# Example: ADC noise
+f, d_asd_ns = fast_d_asd(ns)
 
 # ===============================
 # Plotting
 # ===============================
 plt.figure(figsize=(7, 5))
 
-plt.loglog(f, P_VR_o,  label='SISO', linewidth=1.8)
-plt.loglog(f, P_VR_c1, label='LQG', linewidth=1.8)
-plt.loglog(f, P_VR_c2, label='Decoupled LQG', linewidth=1.8)
+plt.loglog(f, d_asd_ns,  label='Noise Floor', linewidth=1.8)
 
-plt.xlabel('Frequency [Hz]')
-plt.ylabel('PSD [(m/s)$^2$/Hz]')
-plt.title('Comparison of PSD of Vertical Rotating Output')
+plt.xlabel('Frequency [Unit]')
+plt.ylabel('ASD [Unit]')
+plt.title('ASD of ADC Noise')
 plt.legend()
 plt.grid(True, which='both', ls='--', alpha=0.5)
 plt.tight_layout()
 
-plt.savefig('psd_comparison.pdf')
+plt.savefig('asd_ns.pdf')
 plt.show()
 ```
 
-![alt text](appendix/psd_example.png)
+![alt text](old-result/appendix/asd_example.png)
 
 ### 5.2 Additional Metrics (To Be Added)
