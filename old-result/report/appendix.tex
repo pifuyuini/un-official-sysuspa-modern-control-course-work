@@ -1,0 +1,321 @@
+\subsection{最优控制与线性二次型调节器}
+
+\subsubsection{最优控制问题的一般表述}
+
+考虑一个定义在有限时间区间 $t \in [t_0, T]$ 上的连续时间动态系统。
+
+系统的状态演化由以下常微分方程描述：
+$$\dot{x}(\tau) = f(x(\tau), u(\tau), \tau), \quad \tau \in [t, T]$$
+其中：$x(\tau) \in \mathbb{R}^n$ 为系统在时刻 $\tau$ 的状态向量。$u(\tau) \in U \subseteq \mathbb{R}^m$ 为控制输入向量，$U$ 为允许控制集。$t$ 为当前的初始时刻，$x(t) = x$ 为给定的初始状态。
+
+我们的目标是选择一个容许控制律 $u(\cdot)$，使得以下形式的性能指标最小化：
+$$J(t, x; u(\cdot)) = \int_t^T L(x(\tau), u(\tau), \tau) \, d\tau + \Phi(x(T))$$
+其中：$L(x, u, \tau): \mathbb{R}^n \times \mathbb{R}^m \times \mathbb{R} \to \mathbb{R}$ 为运行成本，$\Phi(x(T)): \mathbb{R}^n \to \mathbb{R}$ 终端成本。
+
+定义值函数 $V(t, x)$：它是从初始状态 $(t, x)$ 出发，采用最优控制策略所能获得的最小代价。
+$$V(t, x) = \min_{u(\cdot) \in \mathcal{U}[t, T]} \left\{ \int_t^T L(x(\tau), u(\tau), \tau) \, d\tau + \Phi(x(T)) \right\}$$
+边界条件：显然，当 $t = T$ 时，积分项为零，仅剩终端成本：$V(T, x) = \Phi(x)$。
+
+基于贝尔曼最优原理和值函数，我们可将最优控制问题表述为动态规划问题：我们将时间区间 $[t, T]$ 分割为两部分：$[t, t + \Delta t]$ 和 $[t + \Delta t, T]$，其中 $\Delta t$ 为一个极小的时间步长。由此我们得到离散形式的贝尔曼方程：
+$$V(t, x) = \min_{u \in U} \left\{ \int_t^{t+\Delta t} L(x(\tau), u(\tau), \tau) \, d\tau + V(t+\Delta t, x(t+\Delta t)) \right\}$$
+注：在此小区间 $\Delta t$ 内，我们假定控制量 $u$ 保持为常数（或其变化可忽略），因此优化对象简化为当前的控制值 $u \in U$。
+
+假设 $V(t, x)$ 关于 $t$ 和 $x$ 均连续可微（$C^1$ 类），我们可以对右边的项进行泰勒展开：对足够小的 $\Delta t$ 进行积分项的近似，再对值函数泰勒展开，代回贝尔曼方程，两边同除以 $\Delta t$ 并令 $\Delta t \to 0$，忽略高阶无穷小项 $o(\Delta t)/\Delta t$。整理上述结果，我们得到标准形式的 HJB 方程。这是一个非线性的一阶偏微分方程：
+$$-\frac{\partial V}{\partial t} = \min_{u \in U} \left\{ L(x, u, t) + \nabla_x V(t, x)^T f(x, u, t) \right\}$$
+终端边界条件：$V(T, x) = \Phi(x)$。
+
+如果存在 $u^*(x, t)$ 能够使得右侧的最小化，即：
+$$u^*(x, t) = \arg \min_{u \in U} \left\{ L(x, u, t) + \nabla_x V^T f(x, u, t) \right\}$$
+则 $u^*(x, t)$ 即为最优反馈控制律。将其代回原方程，HJB 方程就变成了一个仅关于 $V$ 的偏微分方程。
+
+将导出的最优控制律 $u^* = \Psi(x, \nabla_x V, t)$ 代回原 HJB 方程中，消除最小化算子：
+$$-\frac{\partial V}{\partial t} = L\left(x, \Psi(x, \nabla_x V, t), t\right) + \nabla_x V^T f\left(x, \Psi(x, \nabla_x V, t), t\right)$$
+此时，方程演变为一个一阶非线性偏微分方程，未知量为标量函数 $V(t, x)$，边界条件为 $V(T, x) = \Phi(x)$。一旦解出这个 PDE 得到 $V(t, x)$，我们即可求出其梯度 $\nabla_x V$，进而代入 $u^* = \Psi(x, \nabla_x V, t)$ 得到具体的控制策略。
+
+\subsubsection{线性二次型调节器（LQG）}
+
+系统动力学：
+$$  f(x, u, t) = A(t)x + B(t)u$$
+
+性能指标：
+$$  L(x, u, t) = \frac{1}{2} x^T Q(t) x + \frac{1}{2} u^T R(t) u, \quad \Phi(x) = \frac{1}{2} x^T S_f x $$
+其中 $Q \succeq 0$ (半正定)，$R \succ 0$ (正定)。
+
+求导得最优控制律：$u^* = -R^{-1} B^T \nabla_x V$，代回 HJB 方程，得
+$$-\frac{\partial V}{\partial t} = \frac{1}{2} x^T Q x + \nabla_x V^T A x - \frac{1}{2} \nabla_x V^T B R^{-1} B^T \nabla_x V$$
+
+我们猜测值函数本身也是关于状态的二次型形式：$V(t, x) = \frac{1}{2} x^T P(t) x$，其中 $P(t)$ 是一个待定的对称矩阵。将 $P(t)$ 代回上述方程，由此得到著名的连续时间黎卡提微分方程（CTDRE）：
+$$-\dot{P}(t) = Q(t) + P(t)A(t) + A(t)^T P(t) - P(t) B(t) R(t)^{-1} B(t)^T P(t)$$
+边界条件：由 $V(T, x) = \frac{1}{2} x^T S_f x$，可得：$P(T) = S_f$。
+
+对于 LQR 问题，求解 HJB 偏微分方程的过程被转化为求解一个矩阵微分方程，一旦求出 $P(t)$，最优控制律即完全确定：$$u^*(t) = -R^{-1}(t) B^T(t) P(t) x(t)$$ 
+
+假定 $(A, B)$ 是可以稳定的，$(Q^{1/2}, A)$是可以检测的。则再末端时间 $t_f \rightarrow \infty$ 时，CTDRE 的解收敛到唯一且稳定的解 $P^s_{\infty}$ ，满足连续时间黎卡提代数方程（CTARE）：
+$$ Q - P^s_{\infty}BR^{-1}B^{T}P^s_{\infty} + P^s_{\infty}A + A^TP^s_{\infty} = 0$$
+
+%
+%\subsection{最优线性观测器（滤波器）}
+%
+%\subsubsection{观测器设计}
+%\begin{enumerate}
+%	\item 构造对偶系统 $A_d = A^T,\quad B_d = C^T $ ；
+%	\item 把 $(A_d, B_d)$ 当成“被控对象”，用状态反馈设计方法设计一个反馈 $K_d$，让 $ A_d - B_d K_d = A^T - C^T K_d $ 的极点落在“稳定区域”。
+%	\item 然后把这个 $ K_d $转置：$J = K_d^T$，注意 $(A - JC)^T = A^T - C^T K_d = A_d - B_d K_d$，所以 $A - JC$ 和 $A_d - B_d K_d$ 特征值相同，自然也在同一稳定区域。
+%\end{enumerate}
+%
+%我们下面用最优滤波理论来形式化这个过程，得到卡尔曼滤波器（用随机噪声模型 + 二次型目标推导卡尔曼滤波，结构和 LQR 完全对偶）。
+%
+%\subsubsection{卡尔曼滤波}
+%设真实系统是一个线性随机系统：
+%$$
+%dx = A x,dt + dw(t)
+%$$
+%$$
+%dy = C x,dt + dv(t)
+%$$
+%
+%非严格但直观地，可以写成“含白噪声”的形式：
+%$$
+%\dot x = A x + \dot w(t),\quad
+%y = C x + \dot v(t)
+%$$
+%其中 $\dot w, \dot v$ 是白噪声，协方差密度为
+%$$
+%E{\dot w(t)\dot w(\zeta)^T} = Q\delta(t-\zeta),\quad
+%E{\dot v(t)\dot v(\zeta)^T} = R\delta(t-\zeta),\quad Q\succeq 0,\ R\succ 0 
+%$$
+%
+%目标：构造一个线性滤波器，用 (y) 来产生状态估计 $\hat x(t)$，并最小化均方误差：
+%$$
+%\tilde x(t) = \hat x(t) - x(t)
+%$$
+%$$
+%J_t = E{\tilde x(t)\tilde x(t)^T} = P(t)
+%$$
+%
+%要设计的是滤波器结构和增益 $J(t)$，省略具体数学推导，结果如下所示：
+%
+%最优滤波器是：
+%$$
+%\dot{\hat x} = A\hat x + J^*(t),[y - C\hat x] 
+%$$
+%$$
+%J^*(t) = P(t)C^T R^{-1}
+%$$
+%
+%当系统为时不变，即 $A,C,Q,R$ 与时间无关，并且滤波运行足够长时间时，误差协方差矩阵 $P(t)$ 在适当条件下收敛到稳态解 $P_\infty$，满足代数 Riccati 方程
+%$$
+%AP_\infty+P_\infty A^\mathrm{T}
+%-P_\infty C^\mathrm{T}R^{-1}CP_\infty+Q=0.
+%$$
+%此时滤波增益收敛为常数
+%$$
+%J_s^\infty=P_\infty C^\mathrm{T}R^{-1},
+%$$
+%相应滤波器退化为常增益线性观测器形式，既简化实现，又保持均方意义下的最优性。该稳态滤波结构将在后续章节中与隔振平台的具体状态空间模型相结合，用于实际噪声环境下的状态估计与控制闭环设计。
+%
+%\begin{uclaim}
+%	如果 $A, C, Q, R$ 都是常数，而且系统满足类似 LQR 那些条件，那么 P(t) 会收敛到某个稳定解 $P_\infty^s$：
+%	$$
+%	Q - P_\infty C^T R^{-1} C P_\infty + P_\infty A^T + A P_\infty = 0 
+%	$$
+%	
+%	对应稳态滤波器是：
+%	$$
+%	\dot{\hat x} = A\hat x + J_\infty(y - C\hat x),\quad
+%	J_\infty = P_\infty^s C^T R^{-1}
+%	$$
+%\end{uclaim}
+%这就得到了我们熟悉的卡尔曼滤波！
+
+\clearpage
+\subsection{非线性 Kalman 滤波方法}
+\subsubsection{扩展 Kalman 滤波（Extended Kalman Filter, EKF）}
+
+主动隔振平台在建模时通常采用线性化的状态空间形式，但在更一般的场景中，系统动力学与测量方程可能包含非线性项。例如，由几何结构产生的耦合关系、执行器特性非线性或传感器输出的非线性映射均可能破坏线性假设。在这种情况下，经典 Kalman 滤波器（KF）不再适用，而扩展 Kalman 滤波器（EKF）则提供了一种在非线性系统下实现递推状态估计的标准方法。作为最广泛应用的非线性滤波技术之一，EKF 通过对非线性系统在每个采样时刻进行局部线性化，使得滤波器仍可利用 KF 的矩阵递推结构得到近似意义下的最优估计。
+
+设系统的离散非线性动力学与观测模型为  
+$$
+x_k = f(x_{k-1},u_k) + w_k,\qquad w_k\sim\mathcal N(0,Q_k),
+$$
+$$
+z_k = h(x_k) + v_k,\qquad v_k\sim\mathcal N(0,R_k),
+$$
+其中  
+- $f(\cdot)$ 为非线性状态更新方程，  
+- $h(\cdot)$ 为非线性观测方程，  
+- $w_k, v_k$ 为互不相关的高斯白噪声。  
+
+对于一般的非线性函数 $f,h$，无法得到 KF 那样的闭式最优估计，因此 EKF 采用在当前估计点处的局部线性化来逼近系统动态。
+
+在时刻 $k$，EKF 将非线性系统在状态估计 $\hat x_{k-1}$ 处一阶泰勒展开，得到线性近似  
+$$
+f(x_{k-1},u_k)
+\approx 
+f(\hat x_{k-1},u_k)
++ F_k (x_{k-1}-\hat x_{k-1}),
+$$
+$$
+h(x_k)
+\approx
+h(\hat x_{k|k-1})
++ H_k (x_k-\hat x_{k|k-1}),
+$$
+其中  
+$$
+F_k = \left.\frac{\partial f}{\partial x}\right|_{x=\hat x_{k-1}},\qquad
+H_k = \left.\frac{\partial h}{\partial x}\right|_{x=\hat x_{k|k-1}},
+$$
+为状态方程与观测方程的雅可比矩阵。
+
+这些矩阵在 EKF 中承担与线性 KF 中 $A_k$、$H_k$ 完全相同的作用：配置线性化误差传播，使 KF 的递推公式在近似线性化系统上成立。
+
+基于上述推导，我们将递推 EKF 的实现整理如下：
+
+状态预测：  
+$$
+\hat x_{k|k-1} = f(\hat x_{k-1},u_k),
+$$
+
+协方差预测：  
+$$
+P_{k|k-1} = F_k P_{k-1} F_k^\top + Q_k.
+$$
+
+其中 $F_k$ 为在 $\hat x_{k-1}$ 处计算的雅可比矩阵。
+
+创新：  
+$$
+\tilde y_k = z_k - h(\hat x_{k|k-1}),
+$$
+
+创新协方差：  
+$$
+S_k = H_k P_{k|k-1} H_k^\top + R_k,
+$$
+
+Kalman 增益：  
+$$
+K_k = P_{k|k-1} H_k^\top S_k^{-1},
+$$
+
+状态更新：  
+$$
+\hat x_k = \hat x_{k|k-1} + K_k \tilde y_k,
+$$
+
+协方差更新（Joseph 形式）：  
+$$
+P_k
+= (I-K_kH_k)P_{k|k-1}(I-K_kH_k)^\top
++ K_k R_k K_k^\top 
+$$
+
+\subsubsection{无迹 Kalman 滤波（Unscented Kalman Filter, UKF）}
+
+
+无迹卡尔曼滤波（UKF）用于处理非线性系统状态估计问题，其核心思想不是在均值处对非线性函数进行一阶或二阶线性化，而是利用
+无迹变换Unscented Transform（UT） 对状态分布进行确定性采样（称为 Sigma 点），
+使高阶统计特性能够更准确地通过非线性函数传播。
+
+系统的离散非线性动力学与观测模型公式与 EKF 相同。 UKF 不需要对函数泰勒展开，而是选取 2n+1 个 Sigma 点：
+
+$$\chi^{(0)} = x,$$
+
+$$\chi^{(i)} = x + \left( \sqrt{(n+\lambda)P} \right)_i, \qquad i=1,\ldots,n,$$
+
+$$\chi^{(i+n)} = x - \left( \sqrt{(n+\lambda)P} \right)_i, \qquad i=1,\ldots,n$$
+
+其中  
+$\lambda = \alpha^2 (n+\kappa) - n$，
+$\alpha$ 控制 Sigma 点分布紧致程度（常取 $10^{-3}\!\sim\!10^{-1}$），  
+$\kappa$ 一般取 $0$，  
+$\beta$ 用来融入先验分布的高斯特性，通常取 $\beta = 2$。
+
+Sigma 点具有不同的权重。
+
+均值权重：
+
+$$
+W_0^{(m)} = \frac{\lambda}{n+\lambda}, \qquad
+W_i^{(m)} = \frac{1}{2(n+\lambda)}.
+$$
+
+协方差权重：
+
+$$
+W_0^{(c)} = \frac{\lambda}{n+\lambda} + (1-\alpha^2+\beta), \qquad
+W_i^{(c)} = \frac{1}{2(n+\lambda)}.
+$$
+
+接下来的递推实现整理如下：
+
+时间更新：
+
+Sigma 点时间传播
+
+$$\chi_{k|k-1}^{(i)} = f(\chi_{k-1}^{(i)}, u_{k-1})$$
+
+预测状态均值
+
+$$\hat{x}_{k|k-1}=\sum_{i=0}^{2n} W_i^{(m)} \chi_{k|k-1}^{(i)}$$
+
+预测协方差
+
+$$
+P_{k|k-1}=\sum_{i=0}^{2n}
+W_i^{(c)}\left( \chi_{k|k-1}^{(i)} - \hat{x}_{k|k-1}\right)
+\left( \chi_{k|k-1}^{(i)} - \hat{x}_{k|k-1} \right)^\top + Q_k
+$$
+
+量测更新
+
+将 Sigma 点传入量测函数
+
+$$\zeta_k^{(i)} = h(\chi_{k|k-1}^{(i)})$$
+
+预测量测均值
+
+$$\hat{z}_k=\sum_{i=0}^{2n} W_i^{(m)} \zeta_k^{(i)}$$
+
+量测协方差
+
+$$
+S_k=\sum_{i=0}^{2n}W_i^{(c)}
+\left(\zeta_k^{(i)} - \hat{z}_k\right)
+\left(\zeta_k^{(i)} - \hat{z}_k\right)^\top
++ R_k
+$$
+
+状态—量测互协方差
+
+$$
+P_{xz}=\sum_{i=0}^{2n}W_i^{(c)}
+\left(\chi_{k|k-1}^{(i)} - \hat{x}_{k|k-1}\right)
+\left(\zeta_k^{(i)} - \hat{z}_k\right)^\top
+$$
+
+卡尔曼增益
+
+$$K_k = P_{xz} S_k^{-1}$$
+
+更新状态
+
+$$\hat{x}_k = \hat{x}_{k|k-1} + K_k (z_k - \hat{z}_k)$$
+
+更新协方差
+
+$$P_k = P_{k|k-1} - K_k S_k K_k^\top $$
+
+
+
+
+
+
+
+
+
+
+
+
+

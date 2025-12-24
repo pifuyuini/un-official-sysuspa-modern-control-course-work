@@ -1,0 +1,1099 @@
+% !TEX root = ../console.tex
+
+\section{简介与问题概述}
+
+\subsection{研究背景}
+
+天琴计划的地面模拟系统旨在验证无拖曳控制技术，其核心需求之一是实现对地面振动的高效隔离。然而，被动隔振装置在低频段的抑振能力有限，难以满足高精度模拟实验对扰动抑制的严格要求。因此，在被动隔振基础上进一步引入主动控制，以提升整体隔振性能成为必要途径。
+
+本课程项目所研究的被控对象即为一套小型三自由度主动隔振平台，如\cref{fig:diagramofthecontrolledobject}所示。平台中央布置两套惯性传感器，分别用于测量水平方向与竖直方向的运动速度信号，为主动控制提供必要的状态信息。同时，平台配备三个音圈电机：其中一个负责水平方向的驱动控制，另外两个构成竖直方向的双执行器结构，用于实现针对竖直自由度的独立控制输出。该传感–执行体系构成了一个典型的多输入多输出（MIMO）主动隔振系统，为后续控制器设计、可控可观性分析、状态估计与 Kalman 滤波开发提供了物理基础。
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.9 \linewidth]{images/diagram_of_the_controlled_object}
+	\caption{（来自课程材料）三自由度主动隔振平台被控对象结构示意图。}
+	\label{fig:diagramofthecontrolledobject}
+\end{figure}
+
+\subsection{控制挑战与作业研究目标}
+
+该主动隔振平台作为一类多输入多输出机械系统，在建模与控制设计中面临多重挑战。首先，平台的结构特性导致水平、竖直和平面转动自由度之间存在显著耦合，使得单纯基于独立通道的 SISO 控制难以有效抑制交叉干扰。其次，平台仅通过惯性传感器获取速度信息，部分位移与内部状态不可直接测量，这不仅限制了基于输出反馈的控制性能，也对状态估计和噪声建模提出了更高要求。此外，音圈电机驱动器的带宽、噪声和饱和特性会在低频隔振和高频噪声抑制之间形成权衡，使得在保证稳定裕度的前提下获得高性能闭环响应变得更加困难。
+
+另一方面，题目材料已经给出了平台的线性化状态空间模型，为后续控制设计奠定了明确的数学基础。系统包含水平、竖直和平面转动三个自由度，适当选取状态变量后，可得到维数为 10 的状态向量，对应的状态空间方程写作
+\begin{equation}
+	\dot{x} = Ax + Bu,\qquad y = Cx + Du .
+\end{equation}
+
+其中，矩阵 $A$ 为 $10\times 10$ 阶，描述平台三轴位移与速度之间的线性耦合动力学；矩阵 $B$ 为 $10\times 5$ 阶，对应 5 个输入量，其中 3 个为音圈电机驱动力输入 $(u_1,u_2,u_3)$，负责水平方向及两个竖直方向的控制，另外 2 个为地面竖直与水平方向的位移扰动输入 $(\lambda u_4,\lambda u_5)$。输出矩阵 $C$ 为 $4\times 10$ 阶，对应两只惯性传感器在左竖直、右竖直、左水平和右水平位置测得的速度信号 $(y_1,\dots,y_4)$，而 $D$ 为零矩阵，表明输入对输出不存在直接通道。由此可将该平台视为一类具有 3 个控制输入、2 个扰动输入和 4 个测量输出的 MIMO 系统，后续所有控制器设计、可控可观性分析、状态估计与 Kalman 滤波均以此模型为起点展开。
+
+在此建模基础上，本课程大作业的研究目标可概括为四个层级：其一，基于上述状态空间模型与通道结构，设计经典解耦控制器，分析在忽略状态估计时的性能与局限；其二，系统地检验模型的可控性与可观性，构造状态反馈控制律与状态观测器，评估不可观测状态对闭环性能的影响；其三，自主实现 Kalman 滤波器，在含噪测量条件下获得最优线性无偏状态估计；其四，针对该 3 输入 4 输出系统设计多变量 MIMO 控制器，并将其与前三阶段控制方案进行定量比较，从而系统评估现代控制方法在主动隔振问题中的优势与适用范围。
+
+
+\section{经典解耦控制器的设计与验证}
+
+在本课程项目的第一阶段，需要在所给线性化模型基础上完成一套“经典解耦控制器”的设计，并对其闭环性能进行验证。鉴于平台左右结构高度对称、两只惯性传感器和两只竖直执行器成对布置的特点，本工作采用“物理对称/反对称坐标变换结合数值优化”的思路，将原始 MIMO 系统先转换为若干物理意义清晰、耦合显著减弱的虚拟通道，再在这些虚拟通道上分别设计单输入单输出经典控制器。该方法避免了直接对传递矩阵进行严格对角化所带来的实现复杂度，更符合工程上对可解释性与可实现性的要求。最终，解耦控制器在外部表现为一个 3 输入 4 输出的 MIMO 控制律，在内部则由若干近乎独立的 SISO 回路构成，为后续状态空间与 MIMO 设计提供了一个可比较的经典基准。
+
+\subsection{解耦策略}
+
+由于主动隔振平台结构呈左右对称，且两只惯性传感器与竖直方向的两路执行器均以成对方式布置，原系统的输入输出映射在物理上具有天然的共模与差模结构。为降低多输入多输出系统的耦合程度，本节采用基于物理对称性的静态线性变换，将原始系统重新表示为若干虚拟通道，使传递函数矩阵在工作频带内近似呈对角形态，从而实现可设计的 SISO 控制框架。
+
+设原始输出为
+\begin{equation}
+	y = \begin{bmatrix} y_1 & y_2 & y_3 & y_4 \end{bmatrix}^{\mathrm T},
+\end{equation}
+其中 $(y_1,y_3)$ 为左右竖直速度测量，$(y_2,y_4)$ 为左右水平速度测量。依据传感器布置及其信号正负值大小，可定义如下虚拟输出
+\begin{equation}
+	z = T_y\, y,
+\end{equation}
+其中
+\begin{equation}
+	T_y=
+	\begin{bmatrix}
+		\frac12 & 0        & \frac12 & 0 \\[2mm]
+		\frac12 & 0        & -\frac12& 0 \\[2mm]
+		0       & \frac12  & 0       & -\frac12 \\[2mm]
+		0       & \frac12  & 0       &  \frac12
+	\end{bmatrix}.
+\end{equation}
+
+变换得到的四个虚拟输出分别为
+\begin{align}
+	z_1 &= \tfrac12(y_1+y_3), \quad &&\text{竖直共模量}, \\
+	z_2 &= \tfrac12(y_1-y_3), \quad &&\text{竖直差模量（反映平台俯仰）}, \\
+	z_3 &= \tfrac12(y_2-y_4), \quad &&\text{水平共模量}, \\
+	z_4 &= \tfrac12(y_2+y_4), \quad &&\text{水平差模量}.
+\end{align}
+
+其中，由于传感器方向设置导致 $y_4\approx -y_2$，故 $z_4$ 在理想模型中应近似为零，可用于模型一致性检验；控制器设计主要使用前三个虚拟输出。
+
+设控制输入为
+\begin{equation}
+	u=\begin{bmatrix} u_1 & u_2 & u_3 \end{bmatrix}^{\mathrm T},
+\end{equation}
+其中 $(u_1,u_2)$ 为左右竖直执行器，$u_3$ 为水平执行器。为匹配虚拟输出结构，引入输入变换
+\begin{equation}
+	u = T_u\, v,
+\end{equation}
+其中
+\begin{equation}
+	T_u =
+	\begin{bmatrix}
+		1 & 1 & 0 \\
+		1 & -1& 0 \\
+		0 & 0 & 1
+	\end{bmatrix},
+	\qquad
+	v=\begin{bmatrix} v_\Sigma \\ v_\Delta \\ v_3 \end{bmatrix},
+\end{equation}
+并有
+\begin{align}
+	v_\Sigma &= \tfrac12(u_1+u_2), &&\text{竖直共模力},\\
+	v_\Delta &= \tfrac12(u_1-u_2), &&\text{竖直差模力},\\
+	v_3 &= u_3, &&\text{水平控制力}.
+\end{align}
+
+对状态空间模型
+\begin{equation}
+	\dot x = A x + B_c u,\qquad y = Cx,
+\end{equation}
+施加上述输入输出变换，得到虚拟坐标形式
+\begin{equation}
+	\dot x = A x + B_v v,\qquad z = C_v x,
+\end{equation}
+其中
+\begin{equation}
+	B_v = B_c T_u,\qquad C_v = T_y C .
+\end{equation}
+
+因此虚拟系统的传递矩阵为
+\begin{equation}
+	G_{zv}(s)= C_v (sI-A)^{-1} B_v .
+\end{equation}
+
+数值计算表明，$G_{zv}(s)$ 在主要控制频带（例如 $0.1\le \omega \le 10\ \mathrm{Hz}$）内呈现明显的对角占优结构，对角元 $G_{11},G_{33}$ 等远大于非对角项 $G_{13},G_{31}$，说明共模/差模变换有效减弱了控制通道间耦合。
+
+若虚拟系统在某些频段内仍存在较强残余耦合，可在虚拟输入内部进一步引入 $2\times 2$ 子矩阵线性混合。以竖直相关两路输入为例，构造附加输入混合矩阵
+\begin{equation}
+	S_{23}=
+	\begin{bmatrix}
+		1 & b \\
+		a & 1
+	\end{bmatrix},
+	\qquad
+	\det(S_{23}) = 1-ab \neq 0,
+\end{equation}
+并将其嵌入整体输入变换
+\begin{equation}
+	T_{u,\mathrm{opt}} = T_u
+	\begin{bmatrix}
+		1&0&0\\
+		0&1&b\\
+		0&a&1
+	\end{bmatrix}.
+\end{equation}
+
+在频带 $\omega\in[\omega_1,\omega_2]$ 上，通过最小化残余耦合指标
+\begin{equation}
+	J(a,b)=
+	\sum_{\omega}\left(
+	\frac{|G'_{23}(j\omega)|^2}{|G'_{22}(j\omega)|^2}
+	+
+	\frac{|G'_{32}(j\omega)|^2}{|G'_{33}(j\omega)|^2}
+	\right),
+\end{equation}
+其中
+\begin{equation}
+	G'_{zv}(s)=G_{zv}(s)\, S_{23},
+\end{equation}
+即可得到最优 $(a,b)$，进一步压低非对角项 $G'_{23}, G'_{32}$，使系统更接近可分离的 SISO 通道。
+
+在实际实现中，采用闭式最小二乘法求得初值，再使用无导数优化方法细化参数，以确保目标频段上获得稳定显著的解耦效果。
+
+但是，这种基于优化的解耦方式在我们的实践过程中对于控制器的设计并无帮助，因此我们还是会采用最初的方案，后续不再对此赘述。
+
+\subsection{控制器设计}
+
+在前一小节通过静态线性变换将原系统解耦为若干虚拟单输入单输出通道后，本节在这些通道上分别设计经典控制器。记水平平动、竖直平动和俯仰转动三个虚拟被控对象的传递函数分别为 $P_{\mathrm{h}}(s)$、$P_{\mathrm{v}}(s)$ 和 $P_{\theta}(s)$。首先对三通道的闭环带宽和相互耦合进行分配与评估，然后在竖直平动、水平平动通道上进行频域整形设计。
+
+对二维解耦模型的频率响应分析表明，俯仰转动通道与水平平动通道之间存在明显的残余耦合：当在 $P_{\theta}(s)$ 上引入带宽超过 $0.5\,\mathrm{rad/s}$ 的控制器时，水平通道的等效开环传递函数  
+\begin{equation}
+	L_{\mathrm{h}}(s) = C_{\mathrm{h}}(s) P_{\mathrm{h}}(s)
+\end{equation}
+在设计带宽附近出现相位急剧下降和增益峰值放大，数值仿真给出的闭环极点已经逼近不稳定边界，水平位移响应出现明显振荡。为了保证水平隔振性能不被破坏，本研究最终放弃对俯仰转动自由度的闭环控制，即令
+\begin{equation}
+	C_{\theta}(s) \equiv 0 ,
+\end{equation}
+在旋转方向保持开环，仅通过被动结构和解耦矩阵限制其对其他自由度的影响。
+
+在竖直平动通道上，目标是获得较高的低频增益和有限的闭环带宽，同时在主要结构共振频率附近抑制振动峰值，并保持足够的增益裕度和相位裕度。设竖直通道的开环为
+\begin{equation}
+	L_{\mathrm{v}}(s) = C_{\mathrm{v}}(s) P_{\mathrm{v}}(s),
+\end{equation}
+其中 $P_{\mathrm{v}}(s)$ 由前述解耦模型得到。使用 MATLAB 的 SISO Design Tool（\texttt{sisotool}）对 $L_{\mathrm{v}}(s)$ 进行频域整形，得到的控制器传递函数为
+\begin{equation}
+	C_{\mathrm{v}}(s)
+	=
+	\frac{-4.269\times10^{9}s^{2}-49.34\,s-0.8706}
+	{s^{3}+1.366\times10^{5}s^{2}+134.9\,s-1.071\times10^{-8}}.
+\end{equation}
+
+该控制器可视为若干典型校正环节的串联组合：分母中靠近原点的极点实现近似积分作用，提高低频增益并消除阶跃稳态误差；分子和分母中位于中高频段的零极点对构成提前相位的串联超前环节，用于提高交叉频率附近的相位裕度及响应速度；高频极点则保证开环在高频快速滚降以抑制测量噪声。在具体设计过程中，以 $P_{\mathrm{v}}(s)$ 的初始 Bode 图为基础，先在 \texttt{sisotool} 中增加一对超前零极点，将交叉频率移动到目标带宽附近，同时调节全局增益使增益裕度与相位裕度满足预定下限；随后在低频引入一对滞后零极点，提升低频增益而基本不改变交叉频率附近的相位；最后根据数值 Bode 图在主要共振频率附近微调零极点位置，使竖直通道的开环幅频在该频带内不过度放大，从而保证闭环对结构共振具有足够阻尼。
+
+水平平动通道的控制器 $C_{\mathrm{h}}(s)$ 采用多项式极点配置方法设计。记对象为
+\begin{equation}
+	P_{\mathrm{h}}(s) = \frac{B_{\mathrm{h}}(s)}{A_{\mathrm{h}}(s)},
+\end{equation}
+控制器写成
+\begin{equation}
+	C_{\mathrm{h}}(s)=\frac{F_{\mathrm{h}}(s)}{E_{\mathrm{h}}(s)},
+\end{equation}
+其中 $E_{\mathrm{h}}(s)$ 和 $F_{\mathrm{h}}(s)$ 为实系数多项式。对单位负反馈闭环，其特征多项式为
+\begin{equation}
+	\Phi(s)=A_{\mathrm{h}}(s)E_{\mathrm{h}}(s)+B_{\mathrm{h}}(s)F_{\mathrm{h}}(s).
+\end{equation}
+
+根据期望的闭环阻尼和带宽构造目标多项式 $\Phi_{\mathrm{d}}(s)$，然后求解丢番图方程
+\begin{equation}
+	A_{\mathrm{h}}(s)E_{\mathrm{h}}(s)+B_{\mathrm{h}}(s)F_{\mathrm{h}}(s)=\Phi_{\mathrm{d}}(s),
+\end{equation}
+即可数值确定 $E_{\mathrm{h}}(s)$ 与 $F_{\mathrm{h}}(s)$ 的系数，从而得到高阶的 $C_{\mathrm{h}}(s)$（具体多项式系数如下）。该控制器在频域上表现为低频近似积分、中频对主要共振模态进行阻尼整形、高频滚降抑噪的典型结构。
+
+\begin{equation}
+	\begin{aligned}
+		N_c(s)=\;&1.813\times10^{10}s^{11}+3.92\times10^{13}s^{10}+1.683\times10^{14}s^{9} \\
+		&+1.015\times10^{16}s^{8}+3.834\times10^{16}s^{7}+9.067\times10^{16}s^{6} \\
+		&+1.773\times10^{17}s^{5}+1.615\times10^{17}s^{4}+1.97\times10^{17}s^{3} \\
+		&+8.113\times10^{15}s^{2}+7.508\times10^{14}s+6.34\times10^{8}.
+	\end{aligned}
+\end{equation}
+
+\begin{equation}
+	\begin{aligned}
+		D_c(s)=\;&s^{12}+8.253\times10^{4}s^{11}+5.317\times10^{6}s^{10}+4.423\times10^{8}s^{9} \\
+		&+2.304\times10^{9}s^{8}+1.078\times10^{11}s^{7}+2.12\times10^{11}s^{6} \\
+		&+4.467\times10^{11}s^{5}+4.853\times10^{11}s^{4}+4.096\times10^{11}s^{3} \\
+		&+1.72\times10^{10}s^{2}+1.535\times10^{9}s+3.159.
+	\end{aligned}
+\end{equation}
+
+\subsection{仿真与性能评估}
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.85\linewidth]{images/Control_Sys}
+	\caption{Simulink 闭环仿真环境搭建。}
+	\label{fig:controlsys}
+\end{figure}
+
+基于前文设计的水平平动与竖直平动解耦控制器，并在俯仰转动方向保持开环，将完整三自由度模型在 Simulink 中搭建闭环结构，对地面位移激励与测量噪声共同作用下的平台响应进行频域仿真。仿真输出采用速度功率谱密度（PSD）表征隔振性能，并与未加控制的开环情形以及单独传感器噪声进行比较。
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.7\linewidth]{images/PSD_of_Horizontal_Output_Decoupled_}
+	\caption{水平输出的开闭环功率谱对比。}
+	\label{fig:psdofhorizontaloutputdecoupled}
+\end{figure}
+
+如\cref{fig:psdofhorizontaloutputdecoupled}所示，对于水平输出，在 $0.1$–$10\,\mathrm{Hz}$ 的隔振工作带宽内，闭环 PSD 相比开环显著降低：在主共振附近约 $1\,\mathrm{Hz}$ 处，开环曲线峰值约为
+\begin{equation}
+	10^{-11}\ \mathrm{(m/s)^2/Hz},
+\end{equation}
+而闭环仅约
+\begin{equation}
+	10^{-15}\ \mathrm{(m/s)^2/Hz},
+\end{equation}
+抑制量接近四个数量级；在更低频段（$10^{-2}$–$10^{-1}\,\mathrm{Hz}$），闭环 PSD 已基本压至与传感器噪声曲线同一水平，表明平台水平残余振动已接近测量噪声极限而未出现明显噪声放大现象。
+
+\begin{figure}
+	\centering
+	\includegraphics[width=0.7\linewidth]{images/PSD_of_Vertical_Translational_Output_Decoupled_}
+	\caption{竖直平动输出的开闭环功率谱对比。}
+	\label{fig:psdofverticaltranslationaloutputdecoupled}
+\end{figure}
+
+如\cref{fig:psdofverticaltranslationaloutputdecoupled}所示，竖直平动输出的改善更为显著。在未控制时，该通道在 $1$–$2\,\mathrm{Hz}$ 附近存在明显共振峰，PSD 峰值接近
+\begin{equation}
+	10^{-8}\ \mathrm{(m/s)^2/Hz},
+\end{equation}
+闭环运行后，该频带内 PSD 下降到约
+\begin{equation}
+	10^{-17}\text{--}10^{-18}\ \mathrm{(m/s)^2/Hz},
+\end{equation}
+的量级，抑制幅度超过九个数量级，表明竖直方向主动隔振对主结构模态具有极强的阻尼效果。在更高频段（大于 $10^{2}\,\mathrm{Hz}$），闭环与开环曲线均与传感器噪声 PSD 基本重合，说明控制器的高频滚降有效避免了对测量噪声的放大。
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.7\linewidth]{images/PSD_of_Vertical_Rotating_Output_Decoupled_}
+	\caption{竖直转动输出的开闭环功率谱对比。}
+	\label{fig:psdofverticalrotatingoutputdecoupled}
+\end{figure}
+
+如\cref{fig:psdofverticalrotatingoutputdecoupled}所示，对于竖直转动输出，尽管该自由度未采用直接闭环控制，但在引入两条解耦 SISO 控制器后，其 PSD 曲线在 $1$–$10\,\mathrm{Hz}$ 范围内仍明显低于开环情形：主峰值由约
+\begin{equation}
+	10^{-11}\ \mathrm{(m/s)^2/Hz}
+\end{equation}
+降至约
+\begin{equation}
+	10^{-13}\text{--}10^{-14}\ \mathrm{(m/s)^2/Hz},
+\end{equation}
+说明通过输入输出变换和主通道的闭环调节，俯仰方向的被动抑制性能同步得到提升，同时高频段未出现新的共振峰或噪声放大现象。
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.7\linewidth]{images/PSD_of_Input_Decoupled_}
+	\caption{解耦输入信号的功率谱密度 (PSD) 曲线。 该图展示了三个不同激励通道——左侧垂直 (Left Vertical)、左侧水平 (Left Horizontal) 及右侧垂直 (Right Vertical)——在频域内的能量分布情况。}
+	\label{fig:psdofinputdecoupled}
+\end{figure}
+
+综合三通道 PSD 结果可以认为，所设计的经典解耦控制器在保证高频噪声不过度放大的前提下，显著降低了工作带宽内的平台残余振动，将系统整体隔振性能提升至接近传感器噪声极限，为后续更高阶状态空间与 MIMO 控制策略设计提供了性能基准。
+
+\section{可控可观性分析与状态估反馈控制策略概述}
+
+\subsection{可控性和可观性分析}
+
+在获得平台的 $10$ 阶线性状态空间模型后，首先基于经典方法构造可控性矩阵与可观性矩阵，并利用 MATLAB 计算其秩。由于系统中存在数值尺度差异较大的状态通道，矩阵的数值条件数较高，可控性与可观性矩阵的数值秩明显依赖容差参数 $\mathrm{tol}$ 的设定。当 $\mathrm{tol}$ 在常规的 $10^{-12}\sim10^{-6}$ 范围内调节时，可控矩阵与可观矩阵的秩在 $6$ 至 $10$ 之间波动。然而，无论容差如何调整，都能稳定识别出至少两个方向的可控性极为薄弱，表明原模型的全部状态并非都对输入激励敏感；类似地，可观性矩阵也呈现出弱可观测方向。这说明尽管系统在结构上是全阶的，但其有效动态可能低于 $10$ 维。
+
+为了避免数值秩判断的不确定性，并更精确刻画系统在“输入 $\to$ 状态 $\to$ 输出”映射中的能量可达性与可观性，我们进一步计算了 Hankel 奇异值。按照定义，Hankel 奇异值 $\sigma_i$ 是可控 Gramian 与可观 Gramian 的乘积 $W_c W_o$ 的特征值平方根，因此能够同时反映状态方向的可控性与可观性，并且对坐标变换不敏感，因而常用于稳定 LTI 系统结构属性的可靠诊断。
+
+本系统得到的 Hankel 奇异值如下（从大到小排列）：
+\begin{equation}
+	G_{\text{hankel}} =
+	\begin{bmatrix}
+		572.7565,\ 572.7565,\ 
+		360.3040,\ 360.2852,\ 
+		43.0552,\ 43.0305,\\[2pt]
+		0.0539,\ 0.0539,\ 
+		0.0001,\ 0.0001
+	\end{bmatrix}.
+\end{equation}
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.7\linewidth]{images/hankel_sv}
+	\caption{Hankel 奇异值大小排序。}
+	\label{fig:hanklesv}
+\end{figure}
+
+如\cref{fig:hanklesv}所示，奇异值序列呈现明显的分层结构：前六个奇异值处于较高量级，代表这些状态方向既容易被输入激励，也能被输出有效观测；第七与第八个奇异值虽较小，但仍显著大于最后两个方向；最后两个奇异值约为 $10^{-4}$ 量级，远低于系统的主要能量尺度，清晰表明存在两个几乎不可控亦不可观的状态方向。结合前述基于秩的初步分析，可以确认这两个状态对系统的输入输出映射作用可以忽略。
+
+基于此结构特征，我们采用平衡实现（balanced realization）并执行 Hankel 奇异值截断（balanced truncation），保留前八个奇异值对应的“重要状态”，获得一个 $8$ 阶的有效子系统用于后续的状态反馈控制与状态估计器设计。由于 Hankel 奇异值提供了模型降阶误差的全局上界（误差与被截断奇异值之和成正比），截断最后两个极小奇异值不会显著影响输入–输出行为，从而在保证闭环性能的前提下降低系统维度，提高控制器设计的数值稳定性与鲁棒性。
+
+综上所述，通过可控性矩阵与可观性矩阵的数值分析以及 Hankel 奇异值的进一步结构诊断，可以明确该平台在原始 $10$ 阶模型下仅有约 $8$ 个有效状态维度。弱可控和弱可观的状态若参与闭环控制可能导致放大噪声、降低控制能量效率甚至影响闭环稳定性，因此在后续控制设计中基于 $8$ 阶可控–可观子系统开展状态反馈与估计器构建是合理且必要的。
+
+\subsection{状态估反馈控制策略概述}
+
+在前一小节中，通过可控可观性矩阵与 Hankel 奇异值分析，我们确认原 10 阶模型中仅有 8 个状态在输入–输出映射中具有显著贡献，并据此构造了一个 8 阶的可控–可观子系统作为后续控制设计的对象。基于这一“有效子系统”，本研究按照课程作业中“引入状态估计器并考察其对控制性能的影响”的要求 ，采用线性二次型高斯（LQG）框架设计状态估计反馈控制器，并将设计过程拆分为状态估计器、状态反馈控制器以及二者耦合三个层次逐步完成。
+
+首先，在状态估计方面，我们拟在第四章中构造并实现一个“自开发”的离散时间卡尔曼滤波器。该滤波器基于系统的离散状态空间模型和噪声统计假设，采用标准的时间更新与量测更新递推形式，对平台的 8 维状态进行在线估计。在卡尔曼滤波收敛到稳态之后，其增益矩阵将趋于常值，此时滤波器可以等价地视为一阶矩意义下的线性最优估计器（Linear Quadratic Estimator, LQE）。为清晰揭示这一理论对应关系，本报告计划在第五章中直接基于 LQE 原理、利用代数 Riccati 方程求解稳态估计增益，构造一个显式的 LQE 观测器，并与第四章实现的递推式卡尔曼滤波器在估计精度与数值性质上进行对比，从而验证自开发算法的正确性和鲁棒性。
+
+其次，在状态反馈控制方面，我们采用线性二次型调节器（Linear Quadratic Regulator, LQR）作为基本设计工具，在同一 8 阶子系统上构造状态反馈律。具体而言，将通过选择不同的状态权重矩阵与控制权重矩阵，分别设计“近似解耦”的 LQR 控制器和充分考虑通道耦合的 MIMO LQR 控制器：前者以对角形式的权重刻画各自由度的独立性能指标，后者则允许通过非对角权重刻画多自由度之间的综合折衷。通过对比两类 LQR 控制器在干扰抑制、控制能量以及耦合抑制方面的闭环性能，可以定量评估解耦设计假设的合理性以及多变量最优控制的潜在收益。
+
+最后，在上述两部分基础上，本报告将把稳态 LQE（或等价的卡尔曼滤波器）与 LQR 状态反馈相组合，构建 LQG 状态估计反馈控制器。不同的组合方式包括：使用自开发卡尔曼滤波器配合 LQR 控制律，以及使用解析求得的稳态 LQE 配合相同的 LQR 控制律。通过对这些 LQG 控制器的系统性仿真比较，可以分别考察估计器设计方法（递推 KF 与解析 LQE）以及反馈律结构（解耦 LQR 与 MIMO LQR）对平台主动隔振性能的影响，从而为后续在实际系统上的实现和参数整定提供定量依据。
+
+\subsection{不可观不可控状态对控制性能影响的初步分析}
+
+根据前两小节的分析，原 10 阶模型中存在两个 Hankel 奇异值约为 $10^{-4}$ 的状态方向，这意味着它们在可控 Gramian 与可观 Gramian 的联合作用下几乎不携带输入–输出能量。换言之，这两个方向既难以通过音圈电机有效激励，也难以被惯性传感器可靠观测，在当前工作点和频段下，对平台的输入–输出映射只产生极微弱的贡献。这一结构特征为后续控制器设计提供了重要指引：与其在这些弱可控、弱可观方向上强行施加反馈，不如在模型层面加以截断，将注意力集中在八个“能量显著”的有效状态上，从而获得更稳健、更易实现的控制律。
+
+从闭环性能的角度看，如果在全 10 维模型上直接应用 LQR/LQG 设计，则优化程序会试图在代价函数中同时压制所有状态，包括那两个几乎不可控、不可观的方向。由于这两个方向对输入的响应极其迟钝，算法倾向于给出较大的反馈增益以弥补“控制效果差”的缺陷，这会导致两个不利后果：一方面，控制律对应的输入信号在高频段显著放大，增加了对执行器饱和、结构共振和驱动噪声放大的风险；另一方面，状态估计器在试图“辨认”这些弱可观方向时会对微小的测量噪声高度敏感，使估计误差协方差矩阵恶化，进而降低整体闭环的数值鲁棒性。
+
+在主动隔振场景下，这类弱可控、弱可观模态往往对应于高频、局部或在当前传感器布置下难以激励的结构振型。对于这些模态，即便通过增加反馈增益勉强实现一定程度的抑制，其对平台整体振动响应（尤其是低频隔振性能）的改善也是有限的，反而更可能把原本局部、微弱的高频振动放大到执行器和传感器的可见范围，表现为控制信号“噪声化”和输出端高频抖动。因此，从工程实现的角度来看，在保证系统稳定的前提下允许这部分弱模态自然衰减，而不刻意在反馈回路中“用力控制”，通常是更为合理的选择。
+
+将这两个状态通过 Hankel 截断从控制模型中剥离，并不意味着它们在物理系统中被“删除”，而是承认在当前工作区间和性能指标下，它们对输入–输出行为的影响可以被看作高阶小量。因为 LQG 设计主要依赖模型的输入–输出特性而非内部坐标的具体选取，只要被截断模态的 Hankel 奇异值足够小，则平衡截断理论保证原系统与降阶系统在 $H_\infty$ 意义下的误差有明确上界，闭环性能不会发生质的退化。换言之，八阶子系统可以被视作原系统的“有效最小实现”，在该模型上进行 LQR、LQE 与 LQG 设计更有利于获得参数适中、噪声不过度放大的控制律，也更符合作业中要求的“考察未观测状态对控制性能影响”的初衷 。
+
+因此，从本节的初步分析可以得出一个对后续设计具有指导意义的结论：对主动隔振平台这类多自由度系统而言，单纯追求“形式上的全可控、全可观”并不一定带来更好的闭环性能，相反，识别并合理忽略弱可控、弱可观状态，通过 Hankel 奇异值分析构造适度降阶的可控–可观子系统，再在其上实施最优估计与最优控制，是在精度、鲁棒性与实现复杂度之间取得平衡的更优策略。后续章节中基于 8 阶子系统的 LQE、卡尔曼滤波器以及 LQR/LQG 控制器设计，正是对这一策略的系统验证。
+
+\section{自主 Kalman 滤波器的开发}
+
+在主动隔振控制系统中，精确获得平台的动态状态是实现高性能反馈控制的前提。然而，由于实际测量通常受到噪声干扰且系统的全部状态不可直接获取，仅依赖传感器输出难以满足控制器对高质量状态信息的需求。因此，有必要构建一套可在噪声环境下提供最优线性状态估计的滤波器。
+
+本章旨在基于系统的随机动力学模型，自主推导并实现 Kalman 滤波器。首先从噪声驱动的连续时间随机系统出发，建立最优滤波的理论基础；随后给出离散时间 Kalman 滤波的递推算法，明确实际工程实现中的预测与更新步骤；最后结合本研究的主动隔振平台模型，为后续 MIMO 控制器设计提供可依赖的高精度状态估计机制。该滤波器作为 LQG 控制框架的重要组成部分，在保障系统稳定性与提升隔振性能方面具有关键作用。
+
+\subsection{基于噪声的随机动力学建模推导线性最优滤波}
+
+在引入 Kalman 滤波之前，需要首先将主动隔振平台的线性模型扩展到随机动力学框架，将各种不确定性统一视为过程噪声与测量噪声。以下推导遵循线性最优滤波的标准理论框架，对连续时间情形给出简要而自洽的推演。
+
+考虑带噪声的线性随机系统
+\begin{equation}
+	dx(t)=A x(t)dt + dw(t), \qquad
+	dy(t)=C x(t)dt + dv(t),
+\end{equation}
+其中 $x(t)\in\mathbb{R}^n$ 为系统状态，$y(t)\in\mathbb{R}^p$ 为测量输出。向量增量 $dw(t)$ 与 $dv(t)$ 建模为零均值、互不相关的随机过程，其形式导数 $\dot w(t),\dot v(t)$ 可理解为具有冲激相关函数的白噪声：
+\begin{equation}
+	\mathbb{E}{\dot w(t)\dot w(\zeta)^\mathrm{T}}=Q,\delta(t-\zeta),\qquad
+	\mathbb{E}{\dot v(t)\dot v(\zeta)^\mathrm{T}}=R,\delta(t-\zeta),
+\end{equation}
+其中 $\mathbb{E}{\cdot}$ 表示数学期望，$\delta(\cdot)$ 为 Dirac 函数，$Q\succeq 0$ 与 $R\succ 0$ 分别为过程噪声与测量噪声的协方差矩阵。为书写简洁，常将上式非正式写成
+\begin{equation}
+	\dot x(t)=A x(t)+\dot w(t),\qquad
+	y'(t)=C x(t)+\dot v(t),
+\end{equation}
+其中 $y'(t)=\frac{dy(t)}{dt}$ 表示测量信号的“连续时间观测”。
+
+我们的目标是在给定噪声统计特性 $Q,R$ 的前提下，基于测量 $y'(t)$ 构造一个线性滤波器，产生对状态的估计 $\hat x(t)$，并在均方意义下使估计误差最小。
+
+定义估计误差
+\begin{equation}
+	\tilde x(t)=\hat x(t)-x(t),
+\end{equation}
+其误差协方差矩阵为
+\begin{equation}
+	P(t)=\mathbb{E}{\tilde x(t)\tilde x(t)^\mathrm{T}}.
+\end{equation}
+线性最优滤波问题可表述为：在所有由 $y'(t)$ 驱动的线性滤波器中，寻找一类滤波结构及其增益，使得某一时刻 $t$ 的指标
+\begin{equation}
+	J_t=\mathbb{E}{\tilde x(t)\tilde x(t)^\mathrm{T}}=P(t)
+\end{equation}
+（或其迹 $\mathrm{tr}P(t)$）尽可能小。
+
+为此，引入一般形式的线性滤波器
+\begin{equation}
+	\dot{\hat x}(t)=A\hat x(t)+J(t)\big[y'(t)-C\hat x(t)\big],
+\end{equation}
+其中 $J(t)$ 为待求的时间变增益矩阵。可以看出，该结构与常规 Luenberger 观测器形式相同，只是观测增益 $J(t)$ 将通过最优准则确定。
+
+将系统动力学与滤波器方程相减，可得误差动力学
+\begin{equation}
+	\dot{\tilde x}(t)
+	=\big(A-J(t)C\big)\tilde x(t)+J(t)\dot v(t)-\dot w(t).
+\end{equation}
+在假设噪声零均值、互不相关、且与初始误差独立的条件下，对上式两侧乘以 $\tilde x(t)^\mathrm{T}$ 并取期望，可得到误差协方差的微分方程
+\begin{equation}
+	\frac{dP(t)}{dt}
+	=\big(A-J(t)C\big)P(t)
+	+P(t)\big(A-J(t)C\big)^\mathrm{T}
+	+J(t)R J(t)^\mathrm{T}
+	+Q.
+\end{equation}
+该方程刻画了在给定滤波增益 $J(t)$ 时误差协方差随时间演化的规律，是后续优化的基础。
+
+为了获得线性最优滤波器，需要在每一时刻选择 $J(t)$ 使误差协方差的演化“尽量减小”。将上式右端对 $J(t)$ 完成平方配方法，可证明最优增益应取为
+\begin{equation}
+	J^*(t)=P(t)C^\mathrm{T}R^{-1}.
+\end{equation}
+将 $J^*(t)$ 代入误差协方差方程，并利用 $R$ 的正定性，可将 Riccati 方程化简为
+\begin{equation}
+	\frac{dP(t)}{dt}
+	=AP(t)+P(t)A^\mathrm{T}
+	-P(t)C^\mathrm{T}R^{-1}CP(t)+Q,
+\end{equation}
+其中 $P(0)$ 由初始估计误差协方差给定。至此，线性最优滤波问题被转化为一个矩阵 Riccati 微分方程的求解问题。
+
+将所得最优增益带回滤波器结构，可得到连续时间线性最优滤波器（即 Kalman 滤波器）的微分形式：
+\begin{equation}
+	\dot{\hat x}(t)
+	=A\hat x(t)
+	+P(t)C^\mathrm{T}R^{-1}\big[y'(t)-C\hat x(t)\big],
+\end{equation}
+其中 $P(t)$ 由上述 Riccati 方程实时演化得到。该滤波器在已知 $A,C,Q,R$ 且系统满足可检测性与一定稳定性条件时，保证在所有线性滤波器中使估计误差协方差最小，因而称为线性最优滤波。
+
+\subsection{离散 Kalman 滤波算法}
+
+在实际的数字控制系统中，主动隔振平台的状态估计往往在离散时间下进行，因而需要采用离散形式的 Kalman 滤波器（如\cref{fig:basicconceptofkalmanfiltering}所示）。与连续时间情形不同，离散 Kalman 滤波通过对状态估计与协方差矩阵进行逐步递推，实现对系统在每个采样时刻的最优线性无偏估计。以下推导建立在允许系统参数随时间变化的广义时变模型基础上，并同时考虑外部控制输入的作用。
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.85\linewidth]{images/Basic_concept_of_Kalman_filtering}
+	\caption{（来自参考文献）卡尔曼滤波器（Kalman Filter）用于实时追踪系统的状态估计值及其估计方差（或不确定性）。该估计过程利用状态转移模型和观测数据进行迭代更新。其中，符号 $\hat{x}_{k|k-1}$ 表示在纳入第 $k$ 个观测值 $y_k$ 之前，系统在 $k$ 时刻的状态估计（即先验状态估计）；而 $P_{k|k-1}$ 则表示相应的不确定性（即先验误差协方差）。}
+	\label{fig:basicconceptofkalmanfiltering}
+\end{figure}
+
+设系统的离散状态空间模型为
+\begin{equation}
+	\begin{aligned}
+		x_k &= A_k x_{k-1} + B_k u_k + w_k, \qquad w_k \sim \mathcal N(0,Q_k), \
+		z_k &= H_k x_k + v_k, \qquad v_k \sim \mathcal N(0,R_k),
+	\end{aligned}
+\end{equation}
+其中：$x_k$ 为离散时刻 $k$ 的状态，$z_k$ 为测量输出，$u_k$ 为控制输入，$A_k$、$B_k$、$H_k$ 分别为状态转移矩阵、控制矩阵与观测矩阵，$w_k$、$v_k$ 分别为过程噪声与测量噪声，且均假设为零均值、白噪声、高斯分布并互不相关。
+
+给定上一时刻的状态估计 $\hat x_{k-1}$ 及其协方差 $P_{k-1}$，Kalman 滤波器通过预测–更新的迭代机制生成对当前状态的最优估计。
+
+预测步骤将估计从上一时刻推进到当前时刻，其核心任务是根据系统动力学进行状态外推并更新误差协方差：
+\begin{equation}
+	\hat x_{k|k-1} = A_k \hat x_{k-1} + B_k u_k,
+\end{equation}
+\begin{equation}
+	P_{k|k-1} = A_k P_{k-1} A_k^\top + Q_k.
+\end{equation}
+
+其中：$\hat x_{k|k-1}$ 表示基于过去信息对当前状态的先验估计；$P_{k|k-1}$ 为先验误差协方差，表征预测不确定性；$Q_k$ 表征过程噪声对预测误差的累积影响。
+
+当新的测量 $z_k$ 到达时，滤波器利用该测量对先验估计进行校正。该步骤由三个关键量决定：新息、协方差新息与 Kalman 增益。
+\begin{equation}
+	\tilde y_k = z_k - H_k \hat x_{k|k-1}.
+\end{equation}
+新息反映测量对预测的偏离程度，是滤波器校正的驱动力。
+
+\begin{equation}
+	S_k = H_k P_{k|k-1} H_k^\top + R_k.
+\end{equation}
+协方差新息综合反映预测误差与测量噪声的影响，是计算 Kalman 增益的关键量。
+
+\begin{equation}
+	K_k = P_{k|k-1} H_k^\top S_k^{-1}.
+\end{equation}
+该增益矩阵决定预测值与创新之间的平衡：当测量噪声较小时增益较大，滤波器更信任测量；反之则更依赖预测模型。
+
+\begin{equation}
+	\hat x_{k} = \hat x_{k|k-1} + K_k \tilde y_k.
+\end{equation}
+
+\begin{equation}
+	P_k = (I - K_k H_k) P_{k|k-1} (I - K_k H_k)^\top + K_k R_k K_k^\top.
+\end{equation}
+采用 Joseph 形式能够保证 $P_k$ 在数值计算中保持严格对称与半正定，是实际工程中普遍采用的更新方式。
+
+\begin{algorithm}[h!]
+	%\textsl{}\setstretch{1.8}  % 若需要增大行距，取消本行注释
+	\renewcommand{\algorithmicrequire}{\textbf{Input:}}
+	\renewcommand{\algorithmicensure}{\textbf{Output:}}
+	\caption{Discrete-time Recursive Kalman Filter}
+	\label{alg:KF}
+	\begin{algorithmic}[1]
+		\REQUIRE
+		System matrices $\{A_k,B_k,C_k,Q_k,R_k\}_{k=0}^{N-1}$,
+		input sequence $\{u_k\}_{k=0}^{N-1}$,
+		measurement sequence $\{y_k\}_{k=1}^{N}$,
+		initial state mean $\hat{x}_{0|0}$,
+		initial covariance $P_{0|0}$
+		
+		\STATE \textbf{State-space model:}
+		\STATE $x_k = A_{k-1}x_{k-1} + B_{k-1}u_{k-1} + w_{k-1}$,
+		$w_{k-1} \sim \mathcal{N}(0,Q_{k-1})$
+		\STATE $y_k = C_k x_k + v_k$,
+		$v_k \sim \mathcal{N}(0,R_k)$
+		
+		\FOR{$k = 1,2,\dots,N$}
+		\STATE \textbf{Time update (prediction):}
+		\STATE $\hat{x}_{k|k-1} = A_{k-1}\hat{x}_{k-1|k-1} + B_{k-1}u_{k-1}$
+		\STATE $P_{k|k-1} = A_{k-1}P_{k-1|k-1}A_{k-1}^\top + Q_{k-1}$
+		
+		\STATE \textbf{Measurement update (correction):}
+		\STATE $K_k = P_{k|k-1}C_k^\top
+		\left(C_k P_{k|k-1} C_k^\top + R_k\right)^{-1}$
+		\STATE $\hat{x}_{k|k} =
+		\hat{x}_{k|k-1} + K_k\left(y_k - C_k\hat{x}_{k|k-1}\right)$
+		\STATE $P_{k|k} =
+		(I - K_k C_k) P_{k|k-1}$
+		\ENDFOR
+		
+		\ENSURE Filtered state estimates $\{\hat{x}_{k|k}\}_{k=0}^{N}$ and
+		covariances $\{P_{k|k}\}_{k=0}^{N}$
+	\end{algorithmic}
+\end{algorithm}
+
+离散 Kalman 滤波器实现了对系统状态的递推式最优估计，其预测–更新结构能够在过程噪声与测量噪声共同作用下保持最小均方误差意义下的最优性。对于主动隔振平台这种 MIMO 系统，离散 Kalman 滤波器不仅能够有效抑制测量噪声带来的不利影响，还为后续的状态反馈控制与 MIMO 控制器设计提供了高质量的状态估计基础。
+
+对于主动隔振平台，若进一步考虑执行器饱和、摩擦、几何耦合或更精确的传感器模型，系统动力学将不可避免地表现为非线性。在这些情形下，扩展 Kalman 滤波（EKF）作为 KF 的自然推广，可用于构建基于更真实物理模型的状态估计器，并与 LQR 或 LQG 控制器结合，实现更鲁棒、更精确的 MIMO 控制结构。另外，EKF的精度依赖于雅可比矩阵的近似质量，当系统强非线性或者雅可比难以推导时，可能需要更加可靠的无迹卡尔曼滤波（UKF）。UKF可以在近似计算量下提供更高阶的精度（一般为三阶），且可避免对雅可比矩阵的推导。EKF 与 UKF 的相关理论简介我们整理在了附录 B 中，此处不再赘述，下面列出我们实现的 EKF 算法和 UKF 算法。
+
+\begin{algorithm}[h!]
+	%\textsl{}\setstretch{1.8}   % 若公式较密，可取消本行注释增大行距
+	\renewcommand{\algorithmicrequire}{\textbf{Input:}}
+	\renewcommand{\algorithmicensure}{\textbf{Output:}}
+	\caption{Discrete-time Recursive Extended Kalman Filter (EKF)}
+	\label{alg:EKF}
+	\begin{algorithmic}[1]
+		\REQUIRE
+		Nonlinear system model
+		$
+		x_k = f(x_{k-1},u_{k-1}) + w_{k-1},\;
+		y_k = h(x_k) + v_k
+		$; \\
+		\hspace*{1.6em} process noise covariance $Q_{k-1}$,
+		measurement noise covariance $R_k$; \\
+		\hspace*{1.6em} initial state estimate $\hat{x}_{0|0}$,
+		initial covariance $P_{0|0}$; \\
+		\hspace*{1.6em} input sequence $\{u_{k}\}_{k=0}^{N-1}$,
+		measurement sequence $\{y_k\}_{k=1}^{N}$
+		
+		\ENSURE
+		Filtered state estimates $\{\hat{x}_{k|k}\}_{k=0}^{N}$,
+		covariances $\{P_{k|k}\}_{k=0}^{N}$
+		
+		\STATE \textbf{Initialization:}
+		set $k \leftarrow 1$
+		
+		\FOR{$k = 1,2,\ldots,N$}
+		\STATE \textbf{Time update (prediction):}
+		\STATE Compute Jacobian of $f(\cdot)$ w.r.t. $x$ at 
+		$\hat{x}_{k-1|k-1}$: $ F_{k-1} = \left.\frac{\partial f(x,u_{k-1})}{\partial x}\right|_{x = \hat{x}_{k-1|k-1}}$
+		\STATE Predicted state mean: $\hat{x}_{k|k-1} = f(\hat{x}_{k-1|k-1}, u_{k-1})$
+		\STATE Predicted covariance: $ P_{k|k-1} = F_{k-1} P_{k-1|k-1} F_{k-1}^\top + Q_{k-1} $
+		\STATE \textbf{Measurement update (correction):}
+		\STATE Compute Jacobian of $h(\cdot)$ w.r.t. $x$ at
+		$\hat{x}_{k|k-1}$: $H_k = \left. \frac{\partial h(x)}{\partial x} \right|_{x = \hat{x}_{k|k-1}} $
+		\STATE Innovation (measurement residual): $r_k = y_k - h(\hat{x}_{k|k-1})$
+		\STATE Innovation covariance: $S_k = H_k P_{k|k-1} H_k^\top + R_k$
+		\STATE Kalman gain: $ K_k = P_{k|k-1} H_k^\top S_k^{-1} $
+		\STATE Updated state mean: $ \hat{x}_{k|k} = \hat{x}_{k|k-1} + K_k r_k $
+		\STATE Updated covariance: $P_{k|k} =(I - K_k H_k) P_{k|k-1}$
+		\ENDFOR
+	\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[h!]
+	%\textsl{}\setstretch{1.8}   % 若公式较密，可取消本行注释增大行距
+	\renewcommand{\algorithmicrequire}{\textbf{Input:}}
+	\renewcommand{\algorithmicensure}{\textbf{Output:}}
+	\caption{Discrete-time Recursive Unscented Kalman Filter (UKF)}
+	\label{alg:UKF}
+	\begin{algorithmic}[1]
+		\REQUIRE
+		Nonlinear system model
+		$
+		x_k = f(x_{k-1},u_{k-1}) + w_{k-1},\;
+		y_k = h(x_k) + v_k
+		$; \\
+		\hspace*{1.6em} process noise covariance $Q_{k-1}$,
+		measurement noise covariance $R_k$; \\
+		\hspace*{1.6em} initial state estimate $\hat{x}_{0|0}$,
+		initial covariance $P_{0|0}$; \\
+		\hspace*{1.6em} input sequence $\{u_{k}\}_{k=0}^{N-1}$,
+		measurement sequence $\{y_k\}_{k=1}^{N}$
+		
+		\ENSURE
+		Filtered state estimates $\{\hat{x}_{k|k}\}_{k=0}^{N}$,
+		covariances $\{P_{k|k}\}_{k=0}^{N}$
+		
+		\STATE \textbf{Initialization:}
+		set $k \leftarrow 1$, Compute 
+		$\lambda = \alpha^2 (n+\kappa) - n$ and scaling factor
+		$\gamma=\sqrt{n+\lambda}$
+		
+		\FOR{$k = 1,2,\ldots,N$}
+		\STATE Compute Cholesky factor of $P_{k-1|k-1}$:$P_{k-1|k-1} = LL^\top$
+		\STATE Construct sigma points:
+		\[
+		\chi_{k-1}^{(0)} = \hat{x}_{k-1|k-1},\qquad
+		\chi_{k-1}^{(i)} = \hat{x}_{k-1|k-1} + \gamma L_i,\quad
+		\chi_{k-1}^{(i+n)} = \hat{x}_{k-1|k-1} - \gamma L_i,
+		\]
+		for $i=1,\ldots,n$
+		
+		\STATE Assign weights:
+		\[
+		W_m^{(0)}=\frac{\lambda}{n+\lambda},\quad
+		W_c^{(0)}=\frac{\lambda}{n+\lambda}+ (1-\alpha^2+\beta),\quad
+		W_m^{(i)}=W_c^{(i)}=\frac{1}{2(n+\lambda)}
+		\]
+		
+		\STATE \textbf{Time update (prediction):}
+		\STATE Propagate sigma points through process model:
+		$\chi_{k|k-1}^{(i)} = f\!\left(\chi_{k-1}^{(i)},u_{k-1}\right)$
+		\STATE Predicted state mean:
+		$\hat{x}_{k|k-1} = \sum_{i=0}^{2n} W_m^{(i)} \chi_{k|k-1}^{(i)}$
+		\STATE Predicted covariance:
+		\[
+		P_{k|k-1} = \sum_{i=0}^{2n} W_c^{(i)}
+		\left(\chi_{k|k-1}^{(i)}-\hat{x}_{k|k-1}\right)
+		\left(\chi_{k|k-1}^{(i)}-\hat{x}_{k|k-1}\right)^{\!\top}
+		+ Q_{k-1}
+		\]
+		
+		\STATE \textbf{Measurement update (correction):}
+		\STATE Propagate sigma points through measurement model:
+		$\mathcal{Z}_{k}^{(i)} = h\!\left(\chi_{k|k-1}^{(i)}\right)$
+		\STATE Predicted measurement mean: $\hat{y}_k = \sum_{i=0}^{2n} W_m^{(i)} \mathcal{Z}_{k}^{(i)}$
+		\STATE Innovation covariance:
+		\[
+		S_k = \sum_{i=0}^{2n} W_c^{(i)}
+		\left(\mathcal{Z}_{k}^{(i)}-\hat{y}_k\right)
+		\left(\mathcal{Z}_{k}^{(i)}-\hat{y}_k\right)^{\!\top}
+		+ R_k
+		\]
+		\STATE Cross-covariance:
+		\[
+		P_{xz} = \sum_{i=0}^{2n} W_c^{(i)}
+		\left(\chi_{k|k-1}^{(i)}-\hat{x}_{k|k-1}\right)
+		\left(\mathcal{Z}_{k}^{(i)}-\hat{y}_k\right)^{\!\top}
+		\]
+		\STATE Kalman gain: $ K_k = P_{xz} S_k^{-1} $
+		\STATE Updated state mean: $ \hat{x}_{k|k} = \hat{x}_{k|k-1} + K_k \left(y_k - \hat{y}_k\right) $
+		\STATE Updated covariance: $P_{k|k} = P_{k|k-1} - K_k S_k K_k^\top$
+		\ENDFOR
+	\end{algorithmic}
+\end{algorithm}
+
+\subsection{滤波效果评估}
+对于 Kalman 滤波器的效果评估，一般采用真实状态与估计状态的比较，如做差并分析误差大小等方法。
+然而，我们对自主设计的 KF 的滤波评估效果主要是在 MIMO 的 LQG 控制中进行的。由于有2个状态难以观测、难以控制，我们通过截断型模型降阶，删去了它们。
+在这种情况下，8 维的 KF 估计状态与 10 维真实状态不会一一对应，因此通过状态比较来进行效果评估是困难的。其他的评估方法主要有：检验创新序列的均值是否零偏置、协方差是否不发散而趋于稳定、
+一致性检验、输出误差分析、动态跟踪能力、闭环性能检查。关于闭环性能，我们将在下一章给出具体介绍。
+
+\subsubsection{创新序列检查}
+Kalman 滤波的核心判据是创新序列：
+\begin{equation}
+	\tilde{y_k} = z_k - C \hat{x}_{k|k-1},
+\end{equation}
+在收敛后，创新序列应该具有零均值、白噪声、协方差接近 R 的特点。由于我们的噪声不属于高斯噪声，因此我们对创新序列做 PSD 应该得到形状类似 ADC 噪声的频谱如\cref{fig:psdofinnovationvector}所示。均值结果如下：
+\begin{equation}
+	mean(innov) = \left[ 6.45e-12,\quad -5.44e-10,\quad -6.19e-12,\quad -5.46e-10 \right],
+\end{equation}
+均值均接近 0 。
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.7\linewidth]{images/PSD_of_Innovation_Vector}
+	\caption{创新序列 PSD 结果。}
+	\label{fig:psdofinnovationvector}
+\end{figure}
+
+\subsubsection{一致性检验}
+残差一致性检验（NIS）是一种反应 KF 的 Q 和 R 调整是否合理的方法。其定义为
+\begin{equation}
+	NIS_k = \tilde{y_k}^\top S_k^{-1} \tilde{y_k},
+\end{equation}
+其中
+\begin{equation}
+	S_k = CP_{k|k-1}C^\top + R,
+\end{equation}
+
+在高斯噪声下，其满足卡方分布，参量测量维度可以为调整 Q 和 R 提供参考。
+
+NIS 要求 KF 滤波正常时，NIS 值无长期偏大、偏小。
+我们的模型中主要是ADC噪声，不满足高斯噪声，可以作为调参参考。
+在调参结束后，我们会检查NIS，最终调节 NIS 到 4 （测量维度）附近，如\cref{fig:nis}所示。
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.7\linewidth]{images/nis}
+	\caption{残差一致性检验（NIS）调参结果。}
+	\label{fig:nis}
+\end{figure}
+
+\subsubsection{输出误差与动态跟踪能力}
+我们记录下仿真中的系统输出与施加的噪声，在时域上进行了比对。可以看到，噪声幅值已明显大于各个输出分量，可以简单视为控制成功。
+
+在仿真中，我们以 10 维状态空间模型作为系统，记为
+\begin{equation}
+	\dot x(t) = A x(t) + B_u u(t) + B_w w(t), \qquad y(t) = C x(t),
+\end{equation}
+其中 $x(t)\in \mathbb{R}^{10}$为真实状态；$u(t)\in \mathbb{R}^3$引入三路驱动力，即 FVL, FVR, FHL 的正弦激励与控制反馈力；
+$w(t)$为地面扰动等过程噪声；$y(t)\in\mathbb{R}^4$为四个传感器输出（VL, HL, VR, HR）。
+我们先将 $C$ 矩阵设为单位阵，以导出真实的状态 $x$ 作为参考，随后接到真实的系统 $C$ 矩阵以得到物理输出，注意后续还需引入 ADC 噪声。实际量测为：
+\begin{equation}
+	z_k = y_k + v_k, \qquad v_k\sim\mathcal{N}(0,R)
+\end{equation}
+$k$ 是离散采样时刻，$v_k\sim\mathcal{N} (0,R)$为测量噪声。 
+
+滤波和控制的 Kalman Filter 部分则是基于对原系统做平衡实化与模态截断得到的 $8$ 维离散模型
+\begin{equation}
+	x_{k+1} = A_d x_k+B_d u_k + G_d w_k,\qquad y_k = C_d x_k,
+\end{equation}
+在此模型上构造离散 Kalman 滤波器，给出状态估计 $\hat{x}_k$ 和后验误差协方差矩阵 $P_k$。
+我们将状态估计再次转化为输出估计：
+\begin{equation}
+	\hat{y}_k = C_d \hat{x}_k,
+\end{equation}
+为了评估滤波效果，我们首先比较真实输出与估计输出的误差
+\begin{equation}
+	e^{(y)}_k = y_k^{true}-\hat{y}_k,
+\end{equation}
+如果截断误差较小且噪声协方差$Q, R$选取合理，那么 Kalman 滤波器在最小均方误差意义下给出最优输出估计，
+理论上应有 $\mathbb{E}{e_k^{(y)}}\approx 0$，且在主要工作频段内 $e_k^{(y)}$ 的功率谱密度小于测量噪声 $v_k$ 的功率谱密度，
+从而在波形和频谱上都可以看到：$\hat{y}_k$ 能够跟随 $y_k^{\text{true}}$ 的低频结构响应，同时显著压低由 $\mathrm{ADC}$ 等引入的高频噪声。
+
+另一方面，我们考虑创新序列
+\begin{equation}
+	\tilde{y_k} = z_k - C_d \hat{x}_{k|k-1},
+\end{equation}
+其中 $\hat{x}_{k|k-1}$ 为一步预测。在线性高斯假设下，当模型 $(A_d,C_d)$ 可观且 $Q,R$ 设定与实际噪声统计一致时，收敛后的最优卡尔曼滤波器满足：$\tilde{y}_k$ 为零均值白噪声，即
+\begin{equation}
+	\mathbb{E} {\tilde{y_k}}=0, \qquad \mathbb{E} (\tilde{y_k}\tilde{y}_{k-l}^\top)=0.
+\end{equation}
+
+因此在仿真中，我们通过计算 $\tilde{y}_k$ 的样本均值及功率谱，验证其均值接近零、频谱形状与测量噪声相近，
+从而说明滤波器已经充分利用模型与历史量测，将所有可预测的输出成分吸收入状态估计，创新中只剩下无法进一步解释的噪声。
+综合输出误差 $e_k^{(y)}$ 的减小以及创新 $\tilde{y}_k$ 的近似白噪声性质，就可以对当前卡尔曼滤波器的滤波效果给出量化评估，
+而不必直接逐维比较削去2维后的内部状态。
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.7\linewidth]{images/ikf_result}
+	\caption{自研 Kalman 滤波器性能评估结果。}
+	\label{fig:ikfresult}
+\end{figure}
+
+如\cref{fig:ikfresult}所示，Output 1-4代表了真实输出与估计输出的差值的谱密度图，即误差谱；Output 5-8 代表了真实输出的谱密度图，可对比体现 0.16Hz 正弦输入对频谱的影响。
+在一定频率的正弦输入下，误差谱在 0.16Hz 处没有产生尖峰，代表着经 KF 后的状态得到的预测输出与实际输出几乎一致，相减后的频谱仅剩余噪声水平。
+这说明 KF 后的状态及状态预测的输出均对真实输出跟踪良好，控制效果佳。
+
+\section{MIMO 控制器设计与多方案性能比较}
+
+\subsection{基于 LQG 方法的 MIMO 控制策略}
+
+在线性多变量控制框架下，线性二次高斯控制（Linear Quadratic Gaussian, LQG）方法为处理含噪动态系统的最优控制问题提供了一套系统化而严谨的设计流程。该方法由最优状态反馈控制器（LQR）与最优状态估计器（LQE，即 Kalman 滤波器）构成，其核心思想是：在状态不可完全测量且系统受到随机噪声扰动的情况下，通过估计器重构系统状态，再以最优反馈律实现控制目标。对于主动隔振平台这类典型的多输入多输出（MIMO）系统，LQG 方法能够有效处理耦合动态、噪声、不确定性等问题，因此成为构建高性能控制器的自然选择。
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.7\linewidth]{images/LQG_Controller}
+	\caption{LQG 控制系统框图。}
+	\label{fig:lqgcontroller}
+\end{figure}
+
+首先，附录 A 已从最优控制理论出发，给出了线性二次型调节器（LQR）的推导过程。LQR 通过求解代数 Riccati 方程得到最优状态反馈增益
+\begin{equation}
+	u(t) = -K x(t),
+\end{equation}
+该控制律保证在二次性能指标意义下实现闭环系统的能量最优性与稳定性。对于任意 MIMO 系统，LQR 所得增益矩阵 (K) 直接体现了系统内部的耦合关系，能够在不同通道之间进行协调，实现全局意义上的最优控制。
+
+然而在实际场景中，系统的全部状态往往不可直接测量。为克服这一限制，需要构造最优状态估计器，即线性最优滤波器（LQE）。在离散或连续时间系统中，当噪声协方差矩阵 $Q,R$ 与系统矩阵 $A,C$ 为时不变时，Kalman 滤波的误差协方差矩阵 $P(t)$ 在满足适当可检测性与稳定性条件下收敛到唯一的稳态解 $P_\infty$，该稳态协方差满足代数 Riccati 方程
+\begin{equation}
+	AP_\infty+P_\infty A^{\mathrm{T}}
+	-P_\infty C^{\mathrm{T}} R^{-1} C P_\infty + Q = 0.
+\end{equation}
+对应的稳态 Kalman 增益为
+
+\begin{equation}
+	J_s^\infty = P_\infty C^{\mathrm{T}} R^{-1},
+\end{equation}
+从而得到具有常增益形式的线性观测器。该估计器不仅在均方意义下具有最优性，同时由于采用常增益结构，其实现难度和实时计算量均大幅降低，特别适用于需要高速状态重构的隔振控制系统。
+
+LQG 方法的关键在于将上述两部分进行串联：估计器提供最优状态估计 $\hat x(t)$，控制器使用该估计值代替真实状态执行最优状态反馈，得到
+\begin{equation}
+	u(t) = -K \hat x(t).
+\end{equation}
+在标准假设条件下，LQG 通过分离原理（separation principle）保证滤波器设计与控制器设计可以独立进行，且二者串联后的闭环系统在统计意义下依然是最优的。这一特性使得 LQG 特别适合于具有噪声扰动、信息不完全、动态耦合强烈的 MIMO 系统。
+
+综上所述，基于 LQG 的 MIMO 控制策略利用 LQR 对控制性能进行优化，同时依托稳态 Kalman 滤波实现可靠的状态估计，从而构建兼具最优性与实现简洁性的主动隔振控制方案。
+
+\subsection{控制器设计过程}
+
+本小节基于前述 LQG 控制策略框架（如\cref{fig:lqgcontroller}所示），对主动隔振平台的 MIMO 控制器进行具体设计。LQG 控制器由确定性最优状态反馈（LQR）与随机最优状态估计器（LQE/Kalman 滤波器）串联构成，其设计需分别确定两部分的权重矩阵与噪声设定，并通过分离原理将二者组合得到完整闭环控制律。
+
+主动隔振平台的结构噪声与传感噪声在工程上具有典型量级，因此首先根据物理经验与传感器规格设定噪声统计特性。过程噪声采用
+\begin{equation}
+	\sigma_{wx} = 10^{-6},\qquad
+	\sigma_{wz} = 10^{-6},
+\end{equation}
+对应过程噪声协方差
+\begin{equation}
+	Q_w = \mathrm{diag}(\sigma_{wx}^2,\; \sigma_{wz}^2).
+\end{equation}
+
+测量噪声方差设为
+\begin{equation}
+	\sigma_v = 10^{-9},\qquad
+	R_v = \sigma_v^2 I_4 .
+\end{equation}
+
+为了增强滤波器的鲁棒性并便于调节滤波强度，引入噪声缩放因子
+\begin{equation}
+	W = \beta_{Q_n} Q_w,\qquad
+	V = \beta_{R_n} R_v ,
+\end{equation}
+其中 $\beta_{Q_n},\beta_{R_n}$ 用于分别调节过程噪声与测量噪声对滤波器的影响。
+
+最终的 Kalman 增益通过 MATLAB 的 \texttt{lqe} 求得
+\begin{equation}
+	L = \mathrm{lqe}(A_8,\; B_{8w},\; C_8,\; W,\; V).
+\end{equation}
+
+在实际应用中，过程噪声矩阵 $W$ 决定滤波器对系统建模误差与未建模扰动的敏感性；测量噪声矩阵 $V$ 决定滤波器对传感器噪声的信任程度。一般而言，增大 $W$ 将强化滤波器对高频扰动的响应，而增大 $V$ 则会抑制噪声放大但减弱动态跟踪能力。通过调节 $\beta_{Q_n},\beta_{R_n}$，可在估计精度与噪声抑制之间获得满意折中。
+
+为了在多变量环境下合理分配控制能量并兼顾隔振性能，需要对系统输出进行尺度化。根据平台竖直与水平通道典型输出量级
+\begin{equation}
+	V_{\mathrm{mag}} = 10^{-4},\qquad
+	H_{\mathrm{mag}} = 10^{-5},
+\end{equation}
+构造输出归一化矩阵
+\begin{equation}
+	S_y =
+	\mathrm{diag}\!\left(
+	\frac{1}{V_{\mathrm{mag}}},\;
+	\frac{1}{H_{\mathrm{mag}}},\;
+	\frac{1}{V_{\mathrm{mag}}},\;
+	\frac{1}{H_{\mathrm{mag}}}
+	\right),
+\end{equation}
+并令归一化输出
+\begin{equation}
+	z = S_y y.
+\end{equation}
+
+对归一化变量统一施加单位权重，得到输出权重矩阵
+\begin{equation}
+	W_y = S_y^{\top} S_y .
+\end{equation}
+
+进一步将其映射到状态空间，构造基础状态权重
+\begin{equation}
+	Q_{\mathrm{base}} = C_8^{\top} W_y C_8 .
+\end{equation}
+
+控制能量惩罚采用等权矩阵
+\begin{equation}
+	R_{\mathrm{base}} = I_3 .
+\end{equation}
+
+为了调节隔振性能与控制能量之间的平衡，引入比例因子
+\begin{equation}
+	Q = \alpha_Q Q_{\mathrm{base}},\qquad
+	R = \alpha_R R_{\mathrm{base}},
+\end{equation}
+其中
+$$
+\alpha_Q = 100,\qquad
+\alpha_R = 0.1.
+$$
+
+最终的 LQR 增益矩阵为
+\begin{equation}
+	K = \mathrm{lqr}(A_8,\; B_{8u},\; Q,\; R).
+\end{equation}
+
+基于分离原理，LQR 与 LQE 可以独立设计并最终串联。完整的 LQG 闭环系统矩阵为
+\begin{equation}
+	A_{\mathrm{LQG}} = A_8 - B_{8u} K - L C_8 ,
+\end{equation}
+\begin{equation}
+	B_{\mathrm{LQG}} = L,\qquad
+	C_{\mathrm{LQG}} = -K,\qquad
+	D_{\mathrm{LQG}} = 0 .
+\end{equation}
+
+该结构等价于先利用 Kalman 滤波器估计状态，再将估计状态代入 LQR 反馈律。由于估计误差与控制律在统计意义上相互独立，该方法在噪声环境下保持最优性。
+
+综合上述设计过程来看，LQG 控制具有四个主要可调参数：
+$$
+\text{LQR: } (\alpha_Q,\; \alpha_R),\qquad
+\text{LQE: } (\beta_{Q_n},\; \beta_{R_n}).
+$$
+
+在实际工程中，这些参数的调节通常遵循以下策略：
+\begin{enumerate}
+	\item \textbf{分阶段调参（先 LQR 后 LQE）}  ：根据分离原理，可先假定状态完全可测，将 $C$ 替换为单位矩阵，从而获得纯 LQR 下的高性能反馈结构。在该阶段专注调节 $\alpha_Q,\alpha_R$，以确定有效的隔振带宽与控制能量分布。
+	
+	\item  \textbf{固定 LQR 后优化 LQE}  ：在完成 LQR 设计后，将其固定，转而调节 Kalman 滤波器噪声权重。
+	$$
+	\beta_{R_n}\uparrow : \text{模型信任增强，噪声抑制减弱};
+	\qquad
+	\beta_{Q_n}\uparrow : \text{扰动敏感性增强，动态响应更快}.
+	$$
+	
+	\item \textbf{关注闭环稳定裕度与噪声鲁棒性}  ：LQG 不具备内在鲁棒性，需同时观察闭环频率响应、增益裕度与相位裕度，在保证稳定性的前提下追求最佳隔振性能。
+	
+	\item \textbf{保持控制律稀疏与物理可实现性}  ：对于执行器分布式的隔振平台，过强的耦合反馈可能导致执行器互相干扰，因此在调节 $Q,R$ 时需同时关注控制律结构的物理合理性。
+\end{enumerate}
+
+\subsection{性能比较}
+
+如第三章所述，我们通过不同设计方法得到了三个 LQG 控制器，以下展示基于 Simulink 仿真的性能比较结果。
+
+\subsubsection{标准串联 LQE 和 LQR}
+
+本小节首先考察采用稳态 LQE 与 LQR 串联构成的标准 LQG 控制器在主动隔振平台上的闭环性能。该控制方案代表了线性最优估计–反馈框架的基准实现，其性能直接反映估计器与反馈律在 MIMO 系统中的综合效果。为此，我们基于 8 阶可控–可观子系统构建闭环模型，并在 Simulink 中加入真实测量噪声与地面扰动输入，对四个惯性传感通道的输出进行功率谱密度（PSD）分析，以量化隔振效果。
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.7\linewidth]{images/PSD_of_Left_Horizontal_Output}
+	\caption{左侧水平通道输出的 PSD 对比结果。}
+	\label{fig:psdoflefthorizontaloutput}
+\end{figure}
+
+如\cref{fig:psdoflefthorizontaloutput}所示，在开环条件下，平台对低频扰动几乎无抑制能力，PSD 在 $10^{-1}\mathrm{Hz}$ 附近出现明显峰值。然而在闭环作用下，标准 LQG 显著降低了该峰值，使整体 PSD 在 $0.1\text{–}10,\mathrm{Hz}$ 范围内下降约 1–2 个数量级。更重要的是，采用更严格测量噪声假设（$V=10^{-9}$，绿线）比采用较大噪声方差时（$V=10^{-6}$，蓝线）进一步改善中频段隔振性能，同时有效维持高频段的噪声不放大。
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.7\linewidth]{images/PSD_of_Left_Vertical_Output}
+	\caption{左侧竖直通道输出的 PSD 分布 。}
+	\label{fig:psdofleftverticaloutput}
+\end{figure}
+
+如\cref{fig:psdofleftverticaloutput}所示，由于竖直方向存在两个音圈电机，其控制能力在结构上强于水平通道，因此闭环 PSD 相比开环下降更为显著。在 $1\mathrm{Hz}$ 附近，闭环 LQG 可将响应从开环的 $10^{-10}(m/s^2)^2/\mathrm{Hz}$ 降低至约 $10^{-12}\text{–}10^{-13}$，实现了约 20–30 dB 的抑制。此外，同样地，更小的测量噪声有助于提升滤波器对估计状态的可信度，从而改善 LQR 的反馈质量。
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.7\linewidth]{images/PSD_of_Right_Vertical_Output}
+	\caption{右侧竖直通道输出的 PSD 结果。}
+	\label{fig:psdofrightverticaloutput}
+\end{figure}
+
+
+如\cref{fig:psdofrightverticaloutput}所示，其趋势与左侧竖直通道高度一致 ，说明标准 LQG 控制在两个竖直自由度上均表现出良好的通道一致性。这表明 LQR 增益矩阵有效协调了两个竖直驱动器之间的耦合关系，而 LQE 提供的状态估计则保证了反馈的实时性与准确性。
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.7\linewidth]{images/PSD_of_Input_with_W_1e-6_V_1e-9_}
+	\caption{三路控制输入的 PSD 分布 。}
+	\label{fig:psdofinputwithw1e-6v1e-9}
+\end{figure}
+
+最后，如\cref{fig:psdofinputwithw1e-6v1e-9}所示，在低频范围内控制力 PSD 较高，用以主动补偿地面扰动，而在中高频段控制输入迅速衰减，避免了对传感器噪声的过度放大。这说明滤波器–反馈器的串联结构保持了良好的噪声鲁棒性，实现了“低频强抑制、高频不过度增益”的典型最优控制特征。
+
+总体而言，标准串联 LQE–LQR 的 LQG 控制器在四个惯性输出通道均展现出显著的振动抑制能力，特别是在扰动能量集中的 $0.1\text{–}10\mathrm{Hz}$ 范围内能获得 10–30 dB 的抑制水平。控制输入谱分布同时表明闭环系统未出现高频控制饱和或噪声放大等不良行为，验证了稳态 Kalman 滤波器与 LQR 的组合具有充足的噪声鲁棒性与动态协调能力，为后续与 iKF–LQR 及解耦式 LQG 控制策略的性能比较奠定了基准。
+
+此外，若我们对控制后结果再做解耦，其控制性能如\cref{fig:psdofverticalrotatingoutput}和\cref{fig:psdofverticaltranslationaloutput}所示，我们将在下一章中详细讨论这些结果。
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.7\linewidth]{images/PSD_of_Vertical_Rotating_Output}
+	\caption{标准 LQG 控后解耦旋转输出 PSD 。}
+	\label{fig:psdofverticalrotatingoutput}
+\end{figure}
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.7\linewidth]{images/PSD_of_Vertical_Translational_Output}
+	\caption{标准 LQG 控后解耦竖直平动输出 PSD 。}
+	\label{fig:psdofverticaltranslationaloutput}
+\end{figure}
+
+\subsubsection{iKF 和 LQR}
+
+在前一节中，我们采用稳态 LQE 与 LQR 构成标准 LQG 控制器，得到了一套理论意义上最优的估计–反馈结构。本小节进一步考察将自研离散时间 Kalman 滤波器（以下简称 iKF）与同一 LQR 控制律串联后所形成的闭环性能。与解析求解的稳态 LQE 不同，iKF 采用严格的时间递推结构实现状态估计，其性能不仅依赖于噪声统计假设，也取决于递推过程的数值性质。因此，将 iKF–LQR 与标准 LQE–LQR 控制器进行对比，有助于评估自开发算法在主动隔振系统中的有效性与稳健性。
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.7\linewidth]{images/PSD_of_Self-Dev_KF_with_LQR_Close_Loop_Output}
+	\caption{iKF–LQR 控制下三个惯性输出通道的功率谱密度（PSD）结果。}
+	\label{fig:psdofself-devkfwithlqrcloseloopoutput}
+\end{figure}
+
+如\cref{fig:psdofself-devkfwithlqrcloseloopoutput}所示，整体来看，iKF–LQR 在全频段的输出 PSD 均保持在 \(10^{-15}\sim 10^{-17}\,(\mathrm{m/s^2})^2/\mathrm{Hz}\) 的量级，与上一节中标准 LQG 控制器的输出水平高度一致，表明自研 iKF 在闭环状态估计质量上能够与稳态 LQE 基本等效。
+
+首先，在低频至中频段（\(10^{-2}\text{–}1\,\mathrm{Hz}\)），iKF–LQR 能有效抑制地面扰动，三个通道的 PSD 曲线呈现相似的下降趋势，并明显低于开环噪声基线（图中橙色曲线）。这说明 iKF 提供的状态估计足以支撑 LQR 的主动补偿能力，使闭环系统保持良好的干扰抑制性能。
+
+其次，在中频段（\(1\text{–}10^2\,\mathrm{Hz}\)），iKF–LQR 所得到的 PSD 不存在明显尖峰，也未出现高频噪声放大现象。这一点具有重要意义，因为递推滤波算法若数值不稳定或更新律不合理，往往会在中高频段导致估计噪声的放大，从而恶化闭环控制输入和输出。而图中的 PSD 曲线在该频段保持平滑，说明 iKF 的滤波增益设计及递推实现均成功避免了这种不良特性。
+
+最后，在高频段（\(>10^2\,\mathrm{Hz}\)），iKF–LQR 输出 PSD 随频率衰减并逐渐逼近传感器噪声地板。这表明控制律在该频段对估计噪声未引起额外放大，维持了与稳态 LQE–LQR 同样的噪声鲁棒性。
+
+综上所述，iKF 与 LQR 构成的闭环性能与标准 LQE–LQR 几乎一致。在主动隔振系统的多变量控制环境下，自研 iKF 能够提供足够准确且数值稳定的状态估计，使整个 iKF–LQR 控制架构在干扰抑制、噪声鲁棒性与通道一致性方面均达到可与稳态最优估计器媲美的水平。这不仅验证了 iKF 实现的正确性，同时确认其可作为后续实验实现的估计器候选，具有工程应用价值。
+
+\subsubsection{解耦 LQG}
+
+在完成标准 LQG（稳态 LQE + LQR）与 iKF–LQR 的性能分析之后，本小节进一步考察在“通道近似解耦”假设下设计的解耦 LQG 控制器的闭环性能。该控制器在设计过程中以对角化的权重矩阵逼近各自由度的相对独立性，从而降低 MIMO 设计维度，并试图在低耦合结构下获得较为直接的控制律。然而，这一近似策略的关键问题在于：主动隔振平台的动力学本质上是耦合的，因此忽略通道间耦合项是否会导致某些模式的控制能力下降，需要通过闭环频域分析加以验证。
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.7\linewidth]{images/PSD_of_Horizontal_Output_Decoupled_LQG_}
+	\caption{水平通道的 PSD 结果。}
+	\label{fig:psdofhorizontaloutputdecoupledlqg}
+\end{figure}
+
+如\cref{fig:psdofhorizontaloutputdecoupledlqg}所示，相较开环（绿线）在 $1\,\mathrm{Hz}$ 附近出现的显著共振峰，解耦 LQG 在该频段仍能提供 $1$–$2$ 个数量级的抑制，使闭环 PSD 下降至约 $10^{-15}\sim 10^{-16}\,(\mathrm{m/s^2})^2/\mathrm{Hz}$。这表明即使在忽略耦合项的前提下，水平通道的控制性能仍维持良好。然而需要注意的是，在 $0.1$–$1\,\mathrm{Hz}$ 区间闭环 PSD 略高于前述 MIMO LQG 方案，说明解耦控制器在中低频段的协调控制能力有所减弱。
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.7\linewidth]{images/PSD_of_Vertical_Rotating_Output_Decoupled_LQG_}
+	\caption{竖直转动通道的 PSD 结果。}
+	\label{fig:psdofverticalrotatingoutputdecoupledlqg}
+\end{figure}
+
+如\cref{fig:psdofverticalrotatingoutputdecoupledlqg}所示，与开环相比，闭环解耦 LQG 明显削弱了两个相邻谐振模式的幅值，但抑制幅度低于 MIMO LQG 方案，尤其是在 $1$–$3\,\mathrm{Hz}$ 频段，闭环 PSD 仍保持在 $10^{-15}$ 附近，而标准 LQG 能进一步降低约 $5$–$10\,\mathrm{dB}$。这表明解耦策略在处理平台转动模态时未能充分消除交叉耦合效应，导致控制律无法实现对该模态的最佳阻尼配置。
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.7\linewidth]{images/PSD_of_Vertical_Translational_Output_Decoupled_LQG_}
+	\caption{竖直平移通道的 PSD 结果。}
+	\label{fig:psdofverticaltranslationaloutputdecoupledlqg}
+\end{figure}
+
+如\cref{fig:psdofverticaltranslationaloutputdecoupledlqg}所示，闭环 PSD 在低频段相较开环显著下降，但在 $1\,\mathrm{Hz}$ 左右仍可观察到较为明显的剩余振动，而 MIMO LQG 在相同频段能将 PSD 降至更低量级。这一差异说明解耦 LQG 在竖直方向的控制性能受到更多限制，可能源于两个竖直执行器之间的通道协同未能有效体现于控制律中。此外，解耦设计导致的观测器–控制器匹配误差也可能降低对扰动的补偿能力。
+
+总体而言，解耦 LQG 在所有通道都实现了对主要共振模式的稳定抑制，并有效降低了平台输出在中高频段的噪声水平，说明其作为近似控制策略具有一定可行性。然而，与标准 LQG 和 iKF–LQR 相比，解耦 LQG 在 $0.1$–$3\,\mathrm{Hz}$ 范围内的隔振性能普遍偏弱，尤其在涉及竖直转动与竖直平移两个耦合显著的模态上表现更为明显。这佐证了 MIMO 控制结构的重要性：主动隔振平台的动力学特征决定了通道间耦合不可忽略，利用全状态 MIMO 设计才能充分协调三个执行器对不同自由度的联合作用。
+
+\section{总结与致谢}
+
+\subsection{研究结果总结}
+
+围绕三自由度主动隔振平台，本报告以线性系统建模、可控可观性分析、自主 Kalman 滤波器开发以及多种状态估反馈控制策略设计为主线，系统完成了从模型理解到闭环性能评估的完整研究链条。首先，在对题目给出的 $10$ 阶线性模型进行可控性、可观性及 Hankel 奇异值分析的基础上，提取出 $8$ 阶可控–可观子系统作为控制与估计的“有效模型”，既保证了对主要动力学模态的覆盖，又显著改善了数值条件，为后续 LQG 设计提供了良好的基础。其次，本报告从随机系统视角推导了连续与离散 Kalman 滤波理论，在此之上实现了自研离散 KF（iKF），并进一步扩展得到 EKF 与 UKF 算法框架；通过与解析稳态 LQE 的对比仿真，验证了 iKF 在估计精度和数值稳定性方面与理论最优解高度一致。最后，基于 $8$ 阶子系统分别构造了经典解耦 SISO 控制器、标准 MIMO LQG 控制器（稳态 LQE/LQR 与 iKF/LQR 两种实现）以及解耦 LQG 控制器，并在统一的扰动与噪声工况下对其闭环 PSD 性能进行了系统比较。
+
+从控制性能角度看，三类控制器在不同自由度上的表现具有明显差异。
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.7\linewidth]{images/Comparison_of_PSD_of_Horizontal_Output}
+	\caption{三种控制器的水平输出性能比对。}
+	\label{fig:comparisonofpsdofhorizontaloutput}
+\end{figure}
+
+如\cref{fig:comparisonofpsdofhorizontaloutput}所示，对于水平输出通道，三种控制方案在工作频带内的 PSD 曲线几乎重合，都能将残余振动压制到约 $10^{-15}\,(\mathrm{m/s^2})^2/\mathrm{Hz}$ 的量级，说明在该自由度上系统耦合较弱，经典解耦 SISO 控制已能达到与 MIMO LQG 相近的隔振效果。
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.7\linewidth]{images/Comparison_of_PSD_of_Vertical_Rotating_Output}
+	\caption{三种控制器的竖直旋转输出性能比对。}
+	\label{fig:comparisonofpsdofverticalrotatingoutput}
+\end{figure}
+
+如\cref{fig:comparisonofpsdofverticalrotatingoutput}所示，在竖直转动自由度上，标准 LQG 控制器对 $1\,\mathrm{Hz}$ 附近的主共振峰实现了最强抑制，将 PSD 从 SISO 控制下的 $10^{-12}$ 量级显著压低至约 $10^{-15}\,(\mathrm{m/s^2})^2/\mathrm{Hz}$，而解耦 LQG 的抑制效果介于二者之间，仍保留了明显的剩余峰值。这表明当自由度间耦合显著时，只有充分利用 MIMO 结构信息的全状态 LQG 才能对转动模态进行有效阻尼配置。
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.7\linewidth]{images/Comparison_of_PSD_of_Vertical_Translational_Output}
+	\caption{三种控制器的竖直平动输出性能比对。}
+	\label{fig:comparisonofpsdofverticaltranslationaloutput}
+\end{figure}
+
+如\cref{fig:comparisonofpsdofverticaltranslationaloutput}所示，对于竖直平动自由度，三者差异更加突出：MIMO LQG 在全频段 PSD 均最低，经典 SISO 控制居中，而解耦 LQG 在低频和共振附近的 PSD 显著高于前两者，在 $10^{-2}\text{–}10^1\,\mathrm{Hz}$ 范围内几乎全程为性能最差的方案。这说明在竖直方向上，通道耦合及执行器协同对隔振性能影响尤为关键，简单的对角权重或解耦假设无法充分挖掘系统潜在的控制能力。
+
+综合所有仿真结果，可以给出如下总体结论：其一，基于 LQE/LQR 或 iKF/LQR 的标准 MIMO LQG 控制器在三个自由度上均实现了最优或近似最优的隔振效果，在主共振频带内可获得 $20$–$40\,\mathrm{dB}$ 量级的 PSD 抑制，并在高频段保持贴近传感器噪声地板的噪声鲁棒性，是当前研究中性能最优且结构清晰的控制方案；其二，自研 iKF 与解析 LQE 在闭环性能上几乎不可区分，说明所实现的离散 Kalman 滤波算法在数值上可靠，可直接推广到更复杂的非线性估计框架；其三，经典解耦 SISO 控制器在水平自由度上表现良好，但在强耦合的竖直转动和平动模态上明显落后于 MIMO LQG，而基于对角权重的解耦 LQG 虽然结构简洁，却在关键模态上牺牲了部分隔振性能。
+
+总体而言，本报告通过系统的建模与分析、自主滤波器开发以及多控制方案对比，清晰展示了现代状态空间方法和 LQG 架构在主动隔振问题上的优势，为后续面向实际天琴地面模拟平台的控制实现和参数整定提供了扎实的理论与仿真基础。
+
+
+\subsection{工作反思与局限性}
+
+回顾整个课程项目，本工作在有限时间内完成了从模型理解、可控可观性分析、自主 Kalman 滤波器开发到多种 LQG 控制策略比较的完整闭环流程，但整体上仍然存在若干值得反思之处。首先，在建模层面，本报告完全依赖题目给出的线性化状态空间模型，并通过 Hankel 奇异值截断构造了 8 阶有效子系统。尽管从输入–输出角度看，截断误差可以接受，但我们并未进一步从物理结构和模态分析角度解释被删去的两个状态，这使得模型降阶过程在物理可解释性上仍显不足。此外，所有仿真均基于“准确模型”的假设，未系统考察参数摄动、刚度与阻尼不确定性、传感器安装误差等因素对 LQG 控制性能的影响，因而对实际工程中不可避免的建模误差缺乏定量鲁棒性结论。
+
+其次，在状态估计器设计方面，自研 iKF 的正确性主要通过与解析 LQE 的频域输出对比加以验证，虽然结果表明二者在闭环 PSD 上高度一致，但尚未对估计误差协方差的收敛性、创新序列的统计性质等进行系统统计检验；对于扩展 Kalman 滤波和无迹 Kalman 滤波，报告仅给出了算法框架与实现，但缺少在非线性仿真场景下的系统评估，这使得“从线性 KF 推广到非线性 KF”的论断仍停留在理论层面。另一方面，噪声协方差矩阵 $Q,R$ 的选取仍主要依赖经验量级和有限试探性调参，尚未结合实际传感器指标和地面振动谱给出更系统的辨识或优化过程。
+
+再次，在控制器设计与性能评价方面，本工作重点采用频域 PSD 作为隔振性能指标，对低频干扰抑制和高频噪声鲁棒性进行了较为细致的分析，但对时域性能的关注相对不足。例如，未对阶跃或脉冲扰动下的平台恢复时间、超调量等进行系统比较，也未对控制输入的时域峰值和能量指标进行约束性分析。对于 LQG 控制方案，本报告主要在标称工况下评估性能，对执行器饱和、限幅、驱动带宽限制等实际约束考虑较少，因此目前的控制律仍属于“理想执行器”假设下的结果，距离实际工程部署仍有一段差距。
+
+最后，整个研究仍停留在数值仿真层面，尚未在真实实验平台上进行验证。一方面，Simulink 闭环仿真为不同控制器提供了可比的基准，但仿真中未充分引入诸如传感器偏置漂移、量化噪声、实时计算延迟、数字实现误差等实际问题；另一方面，控制器稳定裕度与鲁棒性评估主要基于线性频域分析，缺乏与非线性仿真或实验数据的交叉验证。因此，尽管本报告在理论和仿真上清晰展示了 MIMO LQG 相对经典解耦控制的性能优势，自研 iKF 也表现出与解析 LQE 一致的估计能力，但这些结论仍需通过更高保真度模型和物理实验进一步检验与补充。
+
+
+\subsection{致谢}
+
+本次课程大作业由小组全体成员共同完成，过程中分工明确、协作顺畅，各成员在理论分析、算法开发、仿真验证与报告撰写等方面均发挥了重要作用。
+
+首先，在系统的初步分析与模型理解阶段，朱政鑫与张翔中对题目所给平台的动力学结构进行了细致而深入的研读。他们负责完成第二章与第三章的主要内容，包括系统建模关系的梳理、状态空间结构的解读及关键性质的推导。朱政鑫在分析过程中提出了一种新颖的解耦控制方案，并通过理论论证和仿真验证取得了良好效果；张翔中则系统研究了模型的可控性与可观性结构，并对不可控与不可观状态可能造成的性能限制进行了半定量分析，为后续的降阶建模与控制设计提供了坚实基础。
+
+其次，第四章的主要工作由何耀森完成。他从离散时间随机系统的角度出发，自主开发了完整的离散 Kalman 滤波器（iKF），并通过与理论稳态 LQE 的对比验证了该算法优越的估计精度和数值稳定性。在此基础上，他进一步扩展实现了扩展 Kalman 滤波器（EKF）和无迹 Kalman 滤波器（UKF），显著拓展了本次大作业的研究广度与深度。此外，何耀森还参与了大量闭环性能的仿真工作，为第五章控制器性能比较提供了可靠的数值依据。
+
+第五章由杨舒云完成，他负责设计基于 LQR 与 LQE 的 LQG 控制器结构，并对各类控制策略在闭环中的频域表现开展系统的性能评估与数据分析。本次大作业的全部数据处理均使用 Python 实现，绘图采用在 matplotlib 基础上二次开发的 Mamplotly 绘图工具。报告撰写方面，第四章与附录由何耀森参与完成，其余主体内容由杨舒云撰写。
+
+最后，衷心感谢授课教师赵老师和练老师在课程中的系统讲解与严谨引导，也感谢助教李明明师兄在教学与作业讨论环节所提供的支持。通过本次课程学习与大作业实践，小组成员均受益匪浅，对现代控制理论及其工程实现有了更全面和更深入的理解。
+
+同时，本项目的顺利推进也得益于课题组多位师兄师姐以及老师在模型理解、算法实现与实验经验方面的耐心指导与帮助。在此，对所有给予帮助的老师与同学致以诚挚的感谢。
